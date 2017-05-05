@@ -374,44 +374,9 @@ def transform_ensemble(
     return node, connectivity
 
 
-class SeedGuard:
-    """
-    Helper class which backs up the numpy random number generator state and
-    allows to temporarily select a different seed. Resets the random number
-    generator state once the class instances leaves the scope (in a RAII
-    fashion).
-    """
-
-    def __init__(self, seed=None):
-        """
-        Initializes the SeedGuard instance with the given seed. Does not yet
-        change the seed. Use this class in conjunction with the "with-resources"
-        statement.
-        """
-        self.seed = seed
-        self.state = None
-
-    def __enter__(self):
-        """
-        Sets the seed to the seed given in the constructor.
-        """
-        self.state = np.random.get_state()
-        np.random.seed(self.seed)
-        return self
-
-    def __exit__(self, type, value, traceback):
-        """
-        Restors the random number generator to its original state.
-        """
-        if not self.state is None:
-            np.random.set_state(self.state)
-        self.state = None
-
-
 def transform(
         network_src,
         dt=None,
-        sim=None,
         e_rev_E=4.33,  # equiv. to 0mV for v_rest=-65mV, v_th=-50mV
         e_rev_I=-0.33,  # equiv. to -70mV
         use_linear_avg_pot=False,
@@ -427,9 +392,6 @@ def transform(
     network_src: source network that should be transformed.
     dt: timestep that should be used for the simulation of the new ensembles. If
     None, the dt of the given sim object is used.
-    sim: simulation object that should be used for fetching the encoders and
-    decoders of the current network. If None, a new sim object is created with
-    the given dt.
     e_rev_E: excitatory synapse reversal potential.
     e_rev_I: inhibitory synapse reversal potential.
     use_linear_avg_pot: if True, uses the linear average membrane potential
@@ -442,135 +404,128 @@ def transform(
     otherwise decodes the bias from the pre-synaptic population.
     """
 
-    assert ((dt is None) != (sim is None)) # Specify either dt or sim!
-
+    rnd = np.random.RandomState(seed)
     def gen_seed():
-        """
-        Generates a new random seed.
-        """
-        return np.random.randint(np.iinfo(np.int32).max)
+        return rnd.randint(np.iinfo(np.int32).max)
 
-    with SeedGuard(seed) as _:
-        # Collect the input and output connections for each ensemble
-        ensemble_info = {}
-        for ensemble in network_src.all_ensembles:
-            ensemble_info[ensemble] = {
-                'conn_ins': [],
-                'conn_outs': [],
-                'transformed': None
-            }
+    # Collect the input and output connections for each ensemble
+    ensemble_info = {}
+    for ensemble in network_src.all_ensembles:
+        ensemble_info[ensemble] = {
+            'conn_ins': [],
+            'conn_outs': [],
+            'transformed': None
+        }
 
-        # Iterate over all connections in the network and fetch all connections
-        # belonging to an ensemble
-        for connection in network_src.all_connections:
-            pre_obj = connection.pre_obj
-            post_obj = connection.post_obj
+    # Iterate over all connections in the network and fetch all connections
+    # belonging to an ensemble
+    for connection in network_src.all_connections:
+        pre_obj = connection.pre_obj
+        post_obj = connection.post_obj
 
-            # Generate seeds for all objects involved in the connection
-            # which do not have an connection object yet
-            if pre_obj.seed is None:
-                pre_obj.seed = gen_seed()
-            if post_obj.seed is None:
-                post_obj.seed = gen_seed()
-            if connection.seed is None:
-                connection.seed = gen_seed()
+        # Generate seeds for all objects involved in the connection
+        # which do not have an connection object yet
+        if pre_obj.seed is None:
+            pre_obj.seed = gen_seed()
+        if post_obj.seed is None:
+            post_obj.seed = gen_seed()
+        if connection.seed is None:
+            connection.seed = gen_seed()
 
-            # Sort the connections into their corresponding buckets
-            if (pre_obj in ensemble_info):
-                ensemble_info[pre_obj]['conn_outs'].append(connection)
-            if (post_obj in ensemble_info):
-                ensemble_info[post_obj]['conn_ins'].append(connection)
+        # Sort the connections into their corresponding buckets
+        if (pre_obj in ensemble_info):
+            ensemble_info[pre_obj]['conn_outs'].append(connection)
+        if (post_obj in ensemble_info):
+            ensemble_info[post_obj]['conn_ins'].append(connection)
 
-        # Create a simulator object with the given dt if None has been given.
-        if sim is None:
-            sim = nengo.Simulator(network_src, dt=dt)
-
-        # Recursively rebuild all the network instances
-        def transform_network(net_src, parent=None):
-            with nengo.Network(
+    # Recursively rebuild all the network instances
+    def transform_network(net_src, parent=None):
+        with nengo.Network(
                 label=net_src.label,
                 seed=net_src.seed,
                 add_to_container=parent) as net_tar:
-                for ensemble_src in net_src.ensembles:
-                    # Try to convert the ensemble
-                    ensemble_tar, connectivity = transform_ensemble(
-                        ensemble_src,
-                        ensemble_info[ensemble_src]['conn_ins'],
-                        sim,
-                        e_rev_E=e_rev_E,
-                        e_rev_I=e_rev_I,
-                        use_linear_avg_pot=use_linear_avg_pot,
-                        use_conductance_synapses=use_conductance_synapses,
-                        use_factorised_weights=use_factorised_weights,
-                        use_jbias=use_jbias)
+            for ensemble_src in net_src.ensembles:
+                # Try to convert the ensemble
+                ensemble_tar, connectivity = transform_ensemble(
+                    ensemble_src,
+                    ensemble_info[ensemble_src]['conn_ins'],
+                    sim,
+                    e_rev_E=e_rev_E,
+                    e_rev_I=e_rev_I,
+                    use_linear_avg_pot=use_linear_avg_pot,
+                    use_conductance_synapses=use_conductance_synapses,
+                    use_factorised_weights=use_factorised_weights,
+                    use_jbias=use_jbias)
 
-                    # If the conversion was not successful, just use the original
-                    # ensemble instead
-                    if ensemble_tar is None:
-                        net_tar.add(ensemble_src)
+                # If the conversion was not successful, just use the original
+                # ensemble instead
+                if ensemble_tar is None:
+                    net_tar.add(ensemble_src)
 
-                    # Remember the mapping between old and new ensembles, store the
-                    # connectivity matrix
-                    ensemble_info[ensemble_src]['transformed'] = ensemble_tar
-                    ensemble_info[ensemble_src]['connectivity'] = connectivity
+                # Remember the mapping between old and new ensembles, store the
+                # connectivity matrix
+                ensemble_info[ensemble_src]['transformed'] = ensemble_tar
+                ensemble_info[ensemble_src]['connectivity'] = connectivity
 
-                # Add all old nodes to the new network
-                for node in net_src.nodes:
-                    net_tar.add(node)
+            # Add all old nodes to the new network
+            for node in net_src.nodes:
+                net_tar.add(node)
 
-                # Descend into all subnetworks
-                for subnet in net_src.networks:
-                    transform_network(subnet, net_tar)
+            # Descend into all subnetworks
+            for subnet in net_src.networks:
+                transform_network(subnet, net_tar)
 
-            # Return the transformed network
-            return net_tar
+        # Return the transformed network
+        return net_tar
 
-        connection_translation = {}
-        with transform_network(network_src) as network_tar:
-            # Rebuild all connections in the network
-            for connection in network_src.all_connections:
-                pre_obj = connection.pre_obj
-                post_obj = connection.post_obj
-                pre_obj_transformed = (
-                    (pre_obj in ensemble_info) and
-                    (not ensemble_info[pre_obj]['transformed'] is None))
-                post_obj_transformed = (
-                    (post_obj in ensemble_info) and
-                    (not ensemble_info[post_obj]['transformed'] is None))
+    # Create a simulator object with the given dt if None has been given.
+    connection_translation = {}
+    with nengo.Simulator(network_src, dt=dt) as sim, \
+         transform_network(network_src) as network_tar:
+        # Rebuild all connections in the network
+        for connection in network_src.all_connections:
+            pre_obj = connection.pre_obj
+            post_obj = connection.post_obj
+            pre_obj_transformed = (
+                (pre_obj in ensemble_info) and
+                (not ensemble_info[pre_obj]['transformed'] is None))
+            post_obj_transformed = (
+                (post_obj in ensemble_info) and
+                (not ensemble_info[post_obj]['transformed'] is None))
 
-                if not (pre_obj_transformed or post_obj_transformed):
-                    connection_tar = connection
-                    network_tar.add(connection_tar)
-                elif not pre_obj_transformed and post_obj_transformed:
-                    info = ensemble_info[post_obj]
-                    idx = info['conn_ins'].index(connection)
-                    src = pre_obj
-                    if isinstance(pre_obj, nengo.Ensemble):
-                        src = pre_obj.neurons
-                    connection_tar = nengo.Connection(
-                        pre_obj,
-                        info['transformed'][info['connectivity'][idx]],
-                        synapse=connection.synapse,
-                        seed=connection.seed,
-                        label=connection.label)
-                elif pre_obj_transformed and not post_obj_transformed:
-                    info = ensemble_info[pre_obj]
-                    connection_tar = nengo.Connection(
-                        info['transformed'],
-                        post_obj,
-                        transform=sim.data[connection].weights,
-                        synapse=connection.synapse,
-                        seed=connection.seed,
-                        label=connection.label)
-                elif pre_obj_transformed and post_obj_transformed:
-                    pre_info = ensemble_info[pre_obj]
-                    post_info = ensemble_info[post_obj]
-                    connection_tar = nengo.Connection(
-                        pre_info['transformed'],
-                        post_info['transformed'],
-                        synapse=connection.synapse,
-                        seed=connection.seed,
-                        label=connection.label)
+            if not (pre_obj_transformed or post_obj_transformed):
+                connection_tar = connection
+                network_tar.add(connection_tar)
+            elif not pre_obj_transformed and post_obj_transformed:
+                info = ensemble_info[post_obj]
+                idx = info['conn_ins'].index(connection)
+                src = pre_obj
+                if isinstance(pre_obj, nengo.Ensemble):
+                    src = pre_obj.neurons
+                connection_tar = nengo.Connection(
+                    pre_obj,
+                    info['transformed'][info['connectivity'][idx]],
+                    synapse=connection.synapse,
+                    seed=connection.seed,
+                    label=connection.label)
+            elif pre_obj_transformed and not post_obj_transformed:
+                info = ensemble_info[pre_obj]
+                connection_tar = nengo.Connection(
+                    info['transformed'],
+                    post_obj,
+                    transform=sim.data[connection].weights,
+                    synapse=connection.synapse,
+                    seed=connection.seed,
+                    label=connection.label)
+            elif pre_obj_transformed and post_obj_transformed:
+                pre_info = ensemble_info[pre_obj]
+                post_info = ensemble_info[post_obj]
+                connection_tar = nengo.Connection(
+                    pre_info['transformed'],
+                    post_info['transformed'],
+                    synapse=connection.synapse,
+                    seed=connection.seed,
+                    label=connection.label)
 
-        return network_tar
+    return network_tar
 
