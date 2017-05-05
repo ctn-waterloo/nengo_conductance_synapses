@@ -141,7 +141,7 @@ class IfCondExp(nengo.LIF):
 
 def sim_if_cond_exp(decoders,
                     activities,
-                    encoder,
+                    encoders,
                     bias,
                     gain,
                     model,
@@ -152,12 +152,13 @@ def sim_if_cond_exp(decoders,
     Function which builds the simulation functor that can be pluged into a
     Nengo Node object.
 
-    decoder: decoders of the pre-population for the chosen function.
-    encoder: encoders that should be used for this population.
+    decoders: list of decoders of the pre-population for the chosen function for
+    each connection.
     activity: matrix containing the pre-synaptic neuronactivity for
     each of the evaluation points. This matrix is used to decode for the
     biases. Since the biases are a constant function, the evaluation
     points themselves are not required.
+    encoders: list of encoders to be used for each connection.
     bias: bias values that should be used for this population.
     gain: gain values that should be used for this population.
     model: instance of the IfCondExp class defined above. If None
@@ -170,13 +171,14 @@ def sim_if_cond_exp(decoders,
     """
 
     # Fetch the number of neurons from the encoder dimensionality
-    n_neurons = encoder.shape[0]
+    n_neurons = model.n_neurons
 
     # Make sure the dimensions in the input are correct
-    assert (
-        encoder.shape[0] == bias.shape[0] == gain.shape[0] == model.n_neurons)
+    assert (len(decoders) == len(encoders))
     for i in range(len(decoders)):
-        assert (encoder.shape[1] == decoders[i].shape[0])
+        assert (encoders[i].shape[0] == bias.shape[0] == gain.shape[0] ==
+                model.n_neurons)
+        assert (encoders[i].shape[1] == decoders[i].shape[0])
 
     def factorise_weights(weights):
         # Perform a SVD of the weight matrix
@@ -224,7 +226,7 @@ def sim_if_cond_exp(decoders,
     # Calculate the weight matrix for each input independently
     weights = [None] * len(decoders)
     for i in range(len(decoders)):
-        weights[i] = (encoder * gain.reshape(-1, 1)) @ decoders[i]
+        weights[i] = (encoders[i] * gain.reshape(-1, 1)) @ decoders[i]
     weights = np.concatenate(weights, axis=1)
 
     # Split the weight matrix into the positive and negative part
@@ -320,6 +322,7 @@ def transform_ensemble(
     n_dims_in = 0
     decoders = [None] * len(conn_ins)
     activities = [None] * len(conn_ins)
+    encoders = [None] * len(conn_ins)
     connectivity = [None] * len(conn_ins)
     for i, conn_in in enumerate(conn_ins):
         pre_obj = conn_in.pre_obj
@@ -342,6 +345,8 @@ def transform_ensemble(
             if (np.ndim(decoders[i]) == 0):
                 decoders[i] = np.eye(n_dims) * decoders[i]
 
+        # Apply the post-slice (pre-slice is already included in the decoder)
+        encoders[i] = encoder[:, conn_in.post_slice]
         connectivity[i] = list(range(n_dims_in, n_dims_in + n_dims))
         n_dims_in += n_dims
 
@@ -362,7 +367,7 @@ def transform_ensemble(
         output=sim_if_cond_exp(
             decoders=decoders,
             activities=activities,
-            encoder=encoder,
+            encoders=encoders,
             bias=bias,
             gain=gain,
             model=model,
