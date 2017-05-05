@@ -304,6 +304,11 @@ def transform_ensemble(
     # ensemble.
     if not isinstance(ens.neuron_type, nengo.neurons.LIF):
         return None, None
+
+    # Abort if the ensemble has no input.
+    if len(conn_ins) == 0:
+        return None, None
+
     n_neurons = ens.n_neurons
     encoder = sim.data[ens].encoders
     bias = sim.data[ens].bias
