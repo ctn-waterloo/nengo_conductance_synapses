@@ -410,6 +410,7 @@ def transform(
     """
 
     rnd = np.random.RandomState(seed)
+
     def gen_seed():
         return rnd.randint(np.iinfo(np.int32).max)
 
@@ -446,8 +447,7 @@ def transform(
     # Recursively rebuild all the network instances
     def transform_network(net_src, parent=None):
         with nengo.Network(
-                label=net_src.label,
-                seed=net_src.seed,
+                label=net_src.label, seed=net_src.seed,
                 add_to_container=parent) as net_tar:
             for ensemble_src in net_src.ensembles:
                 # Try to convert the ensemble
