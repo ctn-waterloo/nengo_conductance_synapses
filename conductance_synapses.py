@@ -520,9 +520,10 @@ def transform(
             elif pre_obj_transformed and post_obj_transformed:
                 pre_info = ensemble_info[pre_obj]
                 post_info = ensemble_info[post_obj]
+                idx = post_info['conn_ins'].index(connection)
                 connection_tar = nengo.Connection(
                     pre_info['transformed'],
-                    post_info['transformed'],
+                    post_info['transformed'][post_info['connectivity'][idx]],
                     synapse=connection.synapse,
                     seed=connection.seed,
                     label=connection.label)
