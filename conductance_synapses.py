@@ -334,9 +334,10 @@ def transform_ensemble(
             activities[i] = get_activities(sim.data[pre_obj], pre_obj,
                                            sim.data[pre_obj].eval_points)
         elif isinstance(pre_obj, nengo.Node):
-            # Just in case no transformation matrix is given
             n_dims = pre_obj.size_out
             activities[i] = np.zeros((1, pre_obj.size_out))
+
+            # Just in case no transformation matrix is given, generate one
             decoders[i] = sim.data[conn_in].weights
             if (np.ndim(decoders[i]) == 0):
                 decoders[i] = np.eye(n_dims) * decoders[i]
