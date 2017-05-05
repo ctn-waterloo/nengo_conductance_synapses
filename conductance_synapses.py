@@ -503,7 +503,7 @@ def transform(
                 if isinstance(pre_obj, nengo.Ensemble):
                     src = pre_obj.neurons
                 connection_tar = nengo.Connection(
-                    pre_obj,
+                    src,
                     info['transformed'][info['connectivity'][idx]],
                     synapse=connection.synapse,
                     seed=connection.seed,
