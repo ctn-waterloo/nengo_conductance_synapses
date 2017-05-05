@@ -86,9 +86,9 @@ class IfCondExp(nengo.LIF):
         assumption of a high output rate.
 
         e_rev_E: excitatory synapse reversal potential.
-        linear: if True, returns 0.5, which is the average when assuming a
-        linear membrane potential transition between the resting potential zero
-        and the threshold potential 1.
+        use_linear_avg_pot: if True, returns 0.5, which is the average when
+        assuming a linear membrane potential transition between the resting
+        potential zero and the threshold potential 1.
         """
         if use_linear_avg_pot:
             return 0.5
@@ -232,7 +232,7 @@ def sim_if_cond_exp(decoders,
         try:
             weights += decode_bias(bias, activities)
         except np.linalg.linalg.LinAlgError:
-            use_jbias = True # The activity matrix is singular
+            use_jbias = True  # The activity matrix is singular
             pass
     w_pos = weights * (weights > 0)
     w_neg = -weights * (weights < 0)
@@ -278,7 +278,7 @@ def transform_ensemble(
     """
     Creates an equivalent conductance based ensemble for the given input
     ensemble. Returns the node corresponding to the ensemble or None if the
-    ensemble cannot be transformed. As a second parameter returns a list
+    ensemble cannot be transformed. As a second return value returns a list
     containing the target dimensionalities of the newly created node for each
     dimension.
 
