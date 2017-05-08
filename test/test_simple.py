@@ -57,6 +57,12 @@ def transform_and_test(test, model_src, tar):
         sim.run(T)
         data_trafo = sim.data[pout_trafo]
 
+#    import matplotlib.pyplot as plt
+#    ax = plt.figure().gca()
+#    ax.plot(data_src)
+#    ax.plot(data_trafo)
+#    plt.show()
+
     # Make sure the traces are almost equal. Note that conductance based
     # synapses were deactivated when the transform function was called. Only
     # the network graph transformation itself is tested.
@@ -295,6 +301,33 @@ class TestSimple(unittest.TestCase):
 
         transform_and_test(self, model_src, tar)
 
+    def test_pre_neurons_connection(self):
+        with nengo.Network() as model_src:
+            src = nengo.Node(np.sin, label="src")
+            ens1 = nengo.Ensemble(50, 1, label="ens1")
+            ens2 = nengo.Ensemble(50, 1, label="ens2")
+            tar = nengo.Node(size_in=1, label="tar")
+
+            nengo.Connection(src, ens1)
+            nengo.Connection(
+                ens1.neurons, ens2, transform=1e-4 * np.ones((1, 50)))
+            nengo.Connection(ens2, tar)
+
+        transform_and_test(self, model_src, tar)
+
+
+#    def test_pre_neurons_slice_connection(self):
+#        with nengo.Network() as model_src:
+#            src = nengo.Node(np.sin, label="src")
+#            ens1 = nengo.Ensemble(50, 1, label="ens1")
+#            ens2 = nengo.Ensemble(50, 1, label="ens2")
+#            tar = nengo.Node(size_in=1, label="tar")
+
+#            nengo.Connection(src, ens1)
+#            nengo.Connection(ens1.neurons[5:20], ens2, transform=1e-3 * np.ones((1, 15)))
+#            nengo.Connection(ens2, tar)
+
+#        transform_and_test(self, model_src, tar)
 
 if __name__ == '__main__':
     unittest.main()

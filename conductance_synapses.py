@@ -326,27 +326,27 @@ def transform_ensemble(
     connectivity = [None] * len(conn_ins)
     for i, conn_in in enumerate(conn_ins):
         pre_obj = conn_in.pre_obj
-        if isinstance(pre_obj, nengo.Ensemble):
-            # In the case of an ensemble, the input dimensionality is the number
-            # of neurons in the ensemble
-            n_dims = pre_obj.n_neurons
+        post_obj = conn_in.post_obj
+        n_dims = pre_obj.size_out
 
-            # Fetch the decoder, which includes both the optimally calculated
-            # decoder, as well as the
+        if isinstance(pre_obj, nengo.ensemble.Neurons):
+            pre_obj = pre_obj.ensemble
+
+        if isinstance(pre_obj, nengo.Ensemble):
             decoders[i] = sim.data[conn_in].weights
             activities[i] = get_activities(sim.data[pre_obj], pre_obj,
                                            sim.data[pre_obj].eval_points)
         elif isinstance(pre_obj, nengo.Node):
-            n_dims = pre_obj.size_out
             activities[i] = np.zeros((1, pre_obj.size_out))
-
-            # Just in case no transformation matrix is given, generate one
             decoders[i] = sim.data[conn_in].weights
             if (np.ndim(decoders[i]) == 0):
                 decoders[i] = np.eye(n_dims) * decoders[i]
 
         # Apply the post-slice (pre-slice is already included in the decoder)
-        encoders[i] = encoder[:, conn_in.post_slice]
+        if isinstance(post_obj, nengo.ensemble.Neurons):
+            encoders[i] = np.eye(post_obj.ensemble.n_neurons)
+        else:
+            encoders[i] = encoder[:, conn_in.post_slice]
         connectivity[i] = list(range(n_dims_in, n_dims_in + n_dims))
         n_dims_in += n_dims
 
@@ -414,6 +414,15 @@ def transform(
     def gen_seed():
         return rnd.randint(np.iinfo(np.int32).max)
 
+    def fetch_pre_post(connection):
+        pre_obj = connection.pre_obj
+        post_obj = connection.post_obj
+        if isinstance(pre_obj, nengo.ensemble.Neurons):
+            pre_obj = pre_obj.ensemble
+        if isinstance(post_obj, nengo.ensemble.Neurons):
+            post_obj = post_obj.ensemble
+        return pre_obj, post_obj
+
     # Collect the input and output connections for each ensemble
     ensemble_info = {}
     for ensemble in network_src.all_ensembles:
@@ -426,8 +435,7 @@ def transform(
     # Iterate over all connections in the network and fetch all connections
     # belonging to an ensemble
     for connection in network_src.all_connections:
-        pre_obj = connection.pre_obj
-        post_obj = connection.post_obj
+        pre_obj, post_obj = fetch_pre_post(connection)
 
         # Generate seeds for all objects involved in the connection
         # which do not have an connection object yet
@@ -489,8 +497,7 @@ def transform(
          transform_network(network_src) as network_tar:
         # Rebuild all connections in the network
         for connection in network_src.all_connections:
-            pre_obj = connection.pre_obj
-            post_obj = connection.post_obj
+            pre_obj, post_obj = fetch_pre_post(connection)
             pre_obj_transformed = (
                 (pre_obj in ensemble_info) and
                 (not ensemble_info[pre_obj]['transformed'] is None))
