@@ -327,24 +327,41 @@ def transform_ensemble(
     for i, conn_in in enumerate(conn_ins):
         pre_obj = conn_in.pre_obj
         post_obj = conn_in.post_obj
-        n_dims = pre_obj.size_out
 
-        if isinstance(pre_obj, nengo.ensemble.Neurons):
-            pre_obj = pre_obj.ensemble
-
+        # Fetch the decoders and the number of neurons/dimensions in the pre-
+        # ensemble
         if isinstance(pre_obj, nengo.Ensemble):
             decoders[i] = sim.data[conn_in].weights
-            activities[i] = get_activities(sim.data[pre_obj], pre_obj,
-                                           sim.data[pre_obj].eval_points)
+            n_dims = pre_obj.n_neurons
+        elif isinstance(pre_obj, nengo.ensemble.Neurons):
+            pre_obj = pre_obj.ensemble
+            n_dims = pre_obj.n_neurons
+            W = sim.data[conn_in].weights
+            if (np.ndim(W) == 0):
+                W = np.eye(n_dims) * W
+            elif (np.ndim(W) == 1):
+                W = np.diag(W)
+            out_dim, in_dim = W.shape
+            decoders[i] = np.zeros((out_dim, n_dims))
+            decoders[i][:, conn_in.pre_slice] = W
         elif isinstance(pre_obj, nengo.Node):
-            activities[i] = np.zeros((1, pre_obj.size_out))
+            n_dims = pre_obj.size_out
             decoders[i] = sim.data[conn_in].weights
             if (np.ndim(decoders[i]) == 0):
                 decoders[i] = np.eye(n_dims) * decoders[i]
 
-        # Apply the post-slice (pre-slice is already included in the decoder)
+        # Fetch the activities required for bias decoding
+        if not use_jbias:
+            if isinstance(pre_obj, nengo.Ensemble):
+                activities[i] = get_activities(sim.data[pre_obj], pre_obj,
+                                               sim.data[pre_obj].eval_points)
+            elif isinstance(pre_obj, nengo.Node):
+                activities[i] = np.zeros((1, pre_obj.size_out))
+
+        # Apply the post-slice (pre-slice is already included in the decoder),
+        # special treatment required for ".neurons" connections
         if isinstance(post_obj, nengo.ensemble.Neurons):
-            encoders[i] = np.eye(post_obj.ensemble.n_neurons)
+            encoders[i] = (np.eye(n_neurons) / gain.reshape(-1, 1))[:, conn_in.post_slice]
         else:
             encoders[i] = encoder[:, conn_in.post_slice]
         connectivity[i] = list(range(n_dims_in, n_dims_in + n_dims))
