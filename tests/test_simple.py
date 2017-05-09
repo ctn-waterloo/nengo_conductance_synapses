@@ -84,6 +84,17 @@ class TestSimple(unittest.TestCase):
 
         transform_and_test(self, model_src, tar)
 
+    def test_single_ensemble_radius(self):
+        with nengo.Network() as model_src:
+            src = nengo.Node(np.sin, label="src")
+            ens = nengo.Ensemble(100, 1, radius=1.5, label="ens")
+            tar = nengo.Node(size_in=1, label="tar")
+
+            nengo.Connection(src, ens)
+            nengo.Connection(ens, tar)
+
+        transform_and_test(self, model_src, tar)
+
     def test_single_2d_ensemble_slice(self):
         with nengo.Network() as model_src:
             src = nengo.Node(np.sin, label="src")
@@ -261,6 +272,25 @@ class TestSimple(unittest.TestCase):
 
         transform_and_test(self, model_src, tar)
 
+    def test_multiple_ensembles_with_2f(self):
+        with nengo.Network() as model_src:
+            src = nengo.Node(np.sin, label="src")
+            ens1a = nengo.Ensemble(110, 1, label="ens1a")
+            ens1b = nengo.Ensemble(120, 1, label="ens1b")
+            ens2 = nengo.Ensemble(130, 3, label="ens2")
+            tar = nengo.Node(size_in=3, label="tar")
+
+            nengo.Connection(src, ens1a, transform=0.1)
+            nengo.Connection(src, ens1b, transform=0.3)
+            nengo.Connection(ens1a, ens2[0:2], function=lambda x: [x**2, x])
+            nengo.Connection(ens1b, ens2[2], function=lambda x: x**3)
+            nengo.Connection(
+                ens2, ens2, function=lambda x: [x[0] - 1, x[1] + x[2], x[0]])
+            nengo.Connection(ens2, tar)
+
+        transform_and_test(self, model_src, tar)
+
+
     def test_multiple_ensembles_chained(self):
         with nengo.Network() as model_src:
             src = nengo.Node(np.sin, label="src")
@@ -360,7 +390,6 @@ class TestSimple(unittest.TestCase):
             nengo.Connection(ens2, tar)
 
         transform_and_test(self, model_src, tar)
-
 
 if __name__ == '__main__':
     unittest.main()
