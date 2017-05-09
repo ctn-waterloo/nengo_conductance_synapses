@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-#    Code implementing conductance-based synapses in Nengo
+#    Conductance based synapses in Nengo
 #    Copyright (C) 2017  Andreas Stöckel
 #
 #    This program is free software: you can redistribute it and/or modify
@@ -21,8 +21,8 @@ import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import nengo
+import nengo_conductance_synapses as conductance_synapses
 import numpy as np
-import conductance_synapses
 
 T = 1.0
 dt = 1e-4

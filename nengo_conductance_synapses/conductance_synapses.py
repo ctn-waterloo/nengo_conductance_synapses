@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-#    Code implementing conductance-based synapses in Nengo
+#    Conductance based synapses in Nengo
 #    Copyright (C) 2017  Andreas Stöckel
 #
 #    This program is free software: you can redistribute it and/or modify
