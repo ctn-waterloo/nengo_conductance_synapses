@@ -514,7 +514,7 @@ def transform(
 
     # Create a simulator object with the given dt if None has been given.
     connection_translation = {}
-    with nengo.Simulator(network_src, dt=dt) as sim, \
+    with nengo.simulator.Simulator(network_src, dt=dt) as sim, \
          transform_network(network_src) as network_tar:
         # Rebuild all connections in the network
         for connection in network_src.all_connections:
