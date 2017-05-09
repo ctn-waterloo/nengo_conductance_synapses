@@ -364,6 +364,10 @@ def transform_ensemble(
             encoders[i] = (np.eye(n_neurons) / gain.reshape(-1, 1))[:, conn_in.post_slice]
         else:
             encoders[i] = encoder[:, conn_in.post_slice]
+
+        # Scale the encoders by the radius
+        encoders[i] = encoders[i] / ens.radius
+
         connectivity[i] = list(range(n_dims_in, n_dims_in + n_dims))
         n_dims_in += n_dims
 
