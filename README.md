@@ -11,6 +11,7 @@ Create and populate a Nengo `Network` instance which you want to transform. Then
 simply call
 
 ```python3
+import nengo_conductance_synapses as conductance_synapses
 net_out = conductance_synapses.transform(net_in, dt)
 ```
 
