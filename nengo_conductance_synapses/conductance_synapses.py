@@ -311,6 +311,12 @@ def transform_ensemble(
     if len(conn_ins) == 0:
         return None, None
 
+    # Abort if the user requested the ensemble not to be transformed
+    if hasattr(
+            ens,
+            'use_conductance_synapses') and not ens.use_conductance_synapses:
+        return None, None
+
     n_neurons = ens.n_neurons
     encoder = sim.data[ens].encoders
     bias = sim.data[ens].bias
