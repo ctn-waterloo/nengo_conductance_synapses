@@ -367,7 +367,8 @@ def transform_ensemble(
         # Apply the post-slice (pre-slice is already included in the decoder),
         # special treatment required for ".neurons" connections
         if isinstance(post_obj, nengo.ensemble.Neurons):
-            encoders[i] = (np.eye(n_neurons) / gain.reshape(-1, 1))[:, conn_in.post_slice]
+            encoders[i] = (
+                np.eye(n_neurons) / gain.reshape(-1, 1))[:, conn_in.post_slice]
         else:
             encoders[i] = encoder[:, conn_in.post_slice]
 
