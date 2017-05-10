@@ -142,6 +142,7 @@ class IfCondExp(nengo.LIF):
 def sim_if_cond_exp(decoders,
                     activities,
                     encoders,
+                    direct,
                     bias,
                     gain,
                     model,
@@ -159,6 +160,8 @@ def sim_if_cond_exp(decoders,
     biases. Since the biases are a constant function, the evaluation
     points themselves are not required.
     encoders: list of encoders to be used for each connection.
+    direct: list of flags indicating whether this particular connection should
+    directly target the current.
     bias: bias values that should be used for this population.
     gain: gain values that should be used for this population.
     model: instance of the IfCondExp class defined above. If None
@@ -225,9 +228,17 @@ def sim_if_cond_exp(decoders,
 
     # Calculate the weight matrix for each input independently
     weights = [None] * len(decoders)
+    direct_weights = [None] * len(decoders)
     for i in range(len(decoders)):
-        weights[i] = (encoders[i] * gain.reshape(-1, 1)) @ decoders[i]
+        W = (encoders[i] * gain.reshape(-1, 1)) @ decoders[i]
+        if direct[i]: # Silence direct connections
+            direct_weights[i] =  W
+            weights[i] = np.zeros(W.shape)
+        else:
+            direct_weights[i] = np.zeros(W.shape)
+            weights[i] = W
     weights = np.concatenate(weights, axis=1)
+    direct_weights = np.concatenate(direct_weights, axis=1)
 
     # Split the weight matrix into the positive and negative part
     if not use_jbias:
@@ -257,6 +268,9 @@ def sim_if_cond_exp(decoders,
         # If jbias is used instead of the decoding, add it to the neurons
         if use_jbias:
             J += bias
+
+        # Process direct inputs
+        J += direct_weights @ A
 
         # Call the LIF neuron model with the calculated J
         spiked = np.zeros(n_neurons)
@@ -330,6 +344,7 @@ def transform_ensemble(
     activities = [None] * len(conn_ins)
     encoders = [None] * len(conn_ins)
     connectivity = [None] * len(conn_ins)
+    direct = [False] * len(conn_ins)
     for i, conn_in in enumerate(conn_ins):
         pre_obj = conn_in.pre_obj
         post_obj = conn_in.post_obj
@@ -355,6 +370,7 @@ def transform_ensemble(
             decoders[i] = sim.data[conn_in].weights
             if (np.ndim(decoders[i]) == 0):
                 decoders[i] = np.eye(n_dims) * decoders[i]
+            direct[i] = True
 
         # Fetch the activities required for bias decoding
         if not use_jbias:
@@ -375,7 +391,7 @@ def transform_ensemble(
         # Scale the encoders by the radius
         encoders[i] = encoders[i] / ens.radius
 
-        connectivity[i] = list(range(n_dims_in, n_dims_in + n_dims))
+        connectivity[i] = slice(n_dims_in, n_dims_in + n_dims)
         n_dims_in += n_dims
 
     # Create the IfCondExp instance
@@ -396,6 +412,7 @@ def transform_ensemble(
             decoders=decoders,
             activities=activities,
             encoders=encoders,
+            direct=direct,
             bias=bias,
             gain=gain,
             model=model,
