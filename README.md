@@ -26,7 +26,7 @@ Other options that can be passed to the `transform` function include
 * `e_rev_I` Inhibitory synapse reversal potential (default: -0.33, equiv. -70mV)
 * `use_linear_avg_pot` Use a simplified linear approximation to the average membrane potential (default: False)
 * `use_conductance_synapses` If set to false, uses normal current based synapses. Network transformation should not change the result (if `use_factorised_weights` and `use_jbias` are set to False as well). This is useful for testing. (default: True)
-* `use_factorised_weights` Factorises the internal weight matrix in order to speed up the simulation. (default: True)
+* `use_factorised_weights` Factorises the internal weight matrix in order to speed up the simulation. (default: False)
 * `use_jbias` If false, decodes the bias current from the pre-population of each ensemble, except for those which receive input from nodes only. (default: False)
 * `seed` Random seed to be used for the transformation.
 

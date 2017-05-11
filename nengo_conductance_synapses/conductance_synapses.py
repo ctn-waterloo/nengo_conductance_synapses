@@ -148,7 +148,7 @@ def sim_if_cond_exp(decoders,
                     model,
                     dt=1e-4,
                     use_jbias=False,
-                    use_factorised_weights=True):
+                    use_factorised_weights=False):
     """
     Function which builds the simulation functor that can be pluged into a
     Nengo Node object.
@@ -289,7 +289,7 @@ def transform_ensemble(
         e_rev_I=-0.33,  # equiv. to -70mV
         use_linear_avg_pot=False,
         use_conductance_synapses=True,
-        use_factorised_weights=True,
+        use_factorised_weights=False,
         use_jbias=False):
     """
     Creates an equivalent conductance based ensemble for the given input
@@ -431,7 +431,7 @@ def transform(
         e_rev_I=-0.33,  # equiv. to -70mV
         use_linear_avg_pot=False,
         use_conductance_synapses=True,
-        use_factorised_weights=True,
+        use_factorised_weights=False,
         use_jbias=False,
         seed=None):
     """
