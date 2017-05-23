@@ -391,6 +391,18 @@ class TestSimple(unittest.TestCase):
 
         transform_and_test(self, model_src, tar)
 
+    def test_2d_node_input(self):
+        with nengo.Network() as model_src:
+            src = nengo.Node(lambda t: [np.sin(t), np.cos(t)], label="src")
+            ens = nengo.Ensemble(50, 1, label="ens")
+            tar = nengo.Node(size_in=1, label="tar")
+
+            nengo.Connection(src[0], ens)
+            nengo.Connection(src[1], ens)
+            nengo.Connection(ens, tar)
+
+        transform_and_test(self, model_src, tar)
+
 if __name__ == '__main__':
     unittest.main()
 

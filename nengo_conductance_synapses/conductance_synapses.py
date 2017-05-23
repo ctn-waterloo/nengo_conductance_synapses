@@ -369,7 +369,8 @@ def transform_ensemble(
             n_dims = pre_obj.size_out
             decoders[i] = sim.data[conn_in].weights
             if (np.ndim(decoders[i]) == 0):
-                decoders[i] = np.eye(n_dims) * decoders[i]
+                decoders[i] = (
+                    np.eye(n_dims) * decoders[i])[conn_in.pre_slice, :]
             direct[i] = True
 
         # Fetch the activities required for bias decoding
