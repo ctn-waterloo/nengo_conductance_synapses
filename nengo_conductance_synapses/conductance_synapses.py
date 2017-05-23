@@ -231,8 +231,8 @@ def sim_if_cond_exp(decoders,
     direct_weights = [None] * len(decoders)
     for i in range(len(decoders)):
         W = (encoders[i] * gain.reshape(-1, 1)) @ decoders[i]
-        if direct[i]: # Silence direct connections
-            direct_weights[i] =  W
+        if direct[i]:  # Silence direct connections
+            direct_weights[i] = W
             weights[i] = np.zeros(W.shape)
         else:
             direct_weights[i] = np.zeros(W.shape)
