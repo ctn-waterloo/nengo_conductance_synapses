@@ -37,7 +37,9 @@ class IfCondExp(nengo.LIF):
             e_rev_E=4.33,  # equiv. to 0mV for v_rest=-65mV, v_th=-50mV
             e_rev_I=-0.33,  # equiv. to -70mV
             use_linear_avg_pot=False,
-            use_conductance_synapses=True):
+            use_conductance_synapses=True,
+            scale_E=None,
+            scale_I=None):
         """
         Constructor of the IfCondExp neuron class. Copies the given parameters
         and instantiates the internal state vectors. State vectors hold the
@@ -95,7 +97,7 @@ class IfCondExp(nengo.LIF):
         alpha = math.log((e_rev_E - 1) / e_rev_E)
         return (alpha * e_rev_E + 1) / alpha
 
-    def update_synapses(self, A, E_pos, E_neg, D_pos=None, D_neg=None):
+    def calc_J(self, A, E_pos, E_neg, D_pos=None, D_neg=None):
         """
         Computes the current that is being injected into the membrane. The
         current depends on the synaptic conductivities and the membrane
@@ -261,9 +263,9 @@ def sim_if_cond_exp(decoders,
         # Calculate the current current induced by the conductance based
         # synapses
         if use_factorised_weights:
-            J = model.update_synapses(A, E_pos, E_neg, D_pos, D_neg)
+            J = model.calc_J(A, E_pos, E_neg, D_pos, D_neg)
         else:
-            J = model.update_synapses(A, w_pos, w_neg)
+            J = model.calc_J(A, w_pos, w_neg)
 
         # If jbias is used instead of the decoding, add it to the neurons
         if use_jbias:
@@ -279,6 +281,105 @@ def sim_if_cond_exp(decoders,
         return spiked
 
     return simulator
+
+
+def extract_neuron_parameters(ens, sim):
+    """
+    Extracts x-intercept and max_rate from a neuron ensemble based on its gain
+    and bias (assuming the ensemble is a LIF ensemble). Returns two vectors
+    x_intercept and max_rate.
+
+    ens: ensemble for which x_intercept and max_rate should be extracted.
+    sim: simulation object containing the final bias and gain values.
+    """
+    bias = sim.data[ens].bias
+    gain = sim.data[ens].gain
+
+    tau_ref = ens.neuron_type.tau_ref
+    tau_rc = ens.neuron_type.tau_rc
+    max_rate = 1 / (tau_ref - tau_rc * np.log(1 - 1 / (bias + gain)))
+    x_intercept = (1 - bias) / gain
+
+    return x_intercept, max_rate
+
+
+def calculate_conductance_neuron_parameters(x_intercept, max_rate, tau_ref=2e-3,
+                                            e_rev_E=4.33, e_rev_I=-0.33):
+    """
+    Calculates the parameters tau_rc, scale_E, and scale_I for a conductance
+    based neuron under the assumption that GE(x) = 1 + x and GI(x) = 1 - x.
+
+    x_intercept: vector describing the x_intercepts of inidividual neurons.
+    max_rate: vector containing the maximum rates of the neurons.
+    tau_ref: refractory period.
+    e_rev_E: excitatory reversal potential.
+    e_rev_I: inhibitory reversal potential.
+    """
+
+    # Make sure the input are two arrays of the same length
+    max_rate = np.atleast_1d(max_rate).flatten()
+    x_intercept = np.atleast_1d(x_intercept).flatten()
+    assert (max_rate.shape[0] == x_intercept.shape[0])
+
+    EE = e_rev_E
+    EI = e_rev_I
+    XI = x_intercept
+    GL = -np.log(
+        ((-EE * XI + 2 * EE + XI - 2) / (3 * EE))) * (EE * XI + EE - XI - 1) / (
+            (1 / max_rate - tau_ref) * (EE * XI + EE - XI + 2))
+    scale_E = (3 * GL) / (2 * (EE * XI + EE - XI - 1))
+    scale_I = (1 * GL) / (2 * (EI * XI - EI - XI + 1))
+
+    return (1 / GL, a, b)
+
+
+def lif_cond_rate(GL, GE, GI, tau_ref=2e-3, EE=4.33, EI=-0.33):
+    G_tot = GL + GE + GI
+    e_eq = (GL * EL + GE * EE + GI * EI) / G_tot
+
+    mask = e_eq > EL
+    exponent = mask * (e_eq - 1) / (mask * e_eq + (1 - mask))
+    mask = exponent > 1e-15
+    t_spike = -np.log(mask * exponent + (1 - mask)) / G_tot
+    return mask / (tau_ref + t_spike)
+
+
+def solve_for_nonneg_weigths(offs, scale, A, Y, E):
+    import scipy.optimize
+
+
+def calculate_conductance_weights(sim, conn, n_post_in, tau_rc, a, b, tau_ref=2e-3, EE=4.33, EI=-0.33, rng=None):
+    # Fetch the pre- and post-object
+    ens_pre = conn.pre_obj
+    ens_post = conn.post_obj
+
+    # Make sure the pre-population object is an ensemble
+    assert(isinstance(ens_pre, nengo.Ensemble))
+
+    # Fetch the original evaluation points
+    eval_points = sim.data[ens_pre].eval_points
+
+    # Multiply the evaluation points with the encoders in order to get a scalar
+    # per neuron
+    EX = eval_points @ sim.data[ens_pre].encoders.T
+
+    # Calculate the activities of the pre-population.
+    # TODO: Radius?
+    GL = 1 / tau_rc
+    GE = np.maximum(0, a * (1 + EX))
+    GI = np.maximum(0, b * (1 - EX))
+    A = lif_cond_rate(GL, GE, GI, tau_ref, EE, EI)
+
+    # Get the target values
+    from nengo.build.connection import get_targets
+    targets = get_targets(conn, eval_points)
+
+    # Encode the target values using the post-population
+    EY = sim.data[ens_post].encoders @ targets
+
+    # Solve for the excitatory and the inhibitory weights
+    solver = nengo.solvers.NnlsL2(weights=True, reg=0.1)
+    w_pos = solver(A, 1 + )
 
 
 def transform_ensemble(
@@ -330,6 +431,8 @@ def transform_ensemble(
             ens,
             'use_conductance_synapses') and not ens.use_conductance_synapses:
         return None, None
+
+    extract_neuron_parameters(ens, sim)
 
     n_neurons = ens.n_neurons
     encoder = sim.data[ens].encoders
