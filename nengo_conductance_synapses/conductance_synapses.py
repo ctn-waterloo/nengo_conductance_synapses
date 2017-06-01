@@ -20,133 +20,15 @@ import math
 import nengo
 import numpy as np
 
-
-class IfCondExp(nengo.LIF):
-    """
-    The IfCondExp class represents a population of IfCondExp neurons. This
-    neuron type is a LIF neuron with conductance based synapses. This class is
-    used as storage for neuron and synapse parameters, as well as the neuron and
-    synapse state.
-    """
-
-    def __init__(
-            self,
-            n_neurons,
-            tau_rc=20.0e-3,
-            tau_ref=2.0e-3,
-            e_rev_E=4.33,  # equiv. to 0mV for v_rest=-65mV, v_th=-50mV
-            e_rev_I=-0.33,  # equiv. to -70mV
-            use_linear_avg_pot=False,
-            use_conductance_synapses=True,
-            scale_E=None,
-            scale_I=None):
-        """
-        Constructor of the IfCondExp neuron class. Copies the given parameters
-        and instantiates the internal state vectors. State vectors hold the
-        membrane potential, the refractory time, and the conductivity of the
-        excitatory and inhibitory synapses for each individual neuron.
-
-        n_neurons: number of neurons in the population.
-        tau_rc: membrane time constant of the underlying LIF neuron
-        tau_ref: refractory period of the underlying LIF neuron
-        e_rev_E: reversal potential of the excitatory synapse. Potentials are
-        normalised in such a way that a value zero corresponds to the resting
-        potential and a value of one to the threshold potential.
-        e_rev_I: reversal potential of the inhibitory synapse.
-        use_linear_avg_pot: if True, estimates the average membrane potential
-        using a simple linear estimation. If False, takes the non-linearity in
-        the transition between 0 and 1 into account.
-        use_conductance_synapses: if False, reduced the IfCondExp model to the
-        standard LIF model with current based synapses. This flag is useful for
-        testing the implementation.
-        """
-        # Instantiate the base class
-        super(IfCondExp, self).__init__(tau_rc=tau_rc, tau_ref=tau_ref)
-
-        # Copy all other parameters
-        self.n_neurons = n_neurons
-        self.e_rev_E = e_rev_E
-        self.e_rev_I = e_rev_I
-        self.use_conductance_synapses = use_conductance_synapses
-
-        # Instantiate the state vectors
-        self.g_E = np.zeros(n_neurons)
-        self.g_I = np.zeros(n_neurons)
-        self.refractory_time = np.zeros(n_neurons)
-        self.voltage = np.zeros(n_neurons)
-
-        # Calculate the scale factors
-        EV = IfCondExp.average_membrane_potential_estimate(
-            e_rev_E, use_linear_avg_pot=use_linear_avg_pot)
-        self.scale_E = 1 / (self.e_rev_E - EV)
-        self.scale_I = 1 / (-self.e_rev_I + EV)
-
-    @staticmethod
-    def average_membrane_potential_estimate(e_rev_E, use_linear_avg_pot=False):
-        """
-        Function which estimates the average membrane potential under the
-        assumption of a high output rate.
-
-        e_rev_E: excitatory synapse reversal potential.
-        use_linear_avg_pot: if True, returns 0.5, which is the average when
-        assuming a linear membrane potential transition between the resting
-        potential zero and the threshold potential 1.
-        """
-        if use_linear_avg_pot:
-            return 0.5
-        alpha = math.log((e_rev_E - 1) / e_rev_E)
-        return (alpha * e_rev_E + 1) / alpha
-
-    def calc_J(self, A, E_pos, E_neg, D_pos=None, D_neg=None):
-        """
-        Computes the current that is being injected into the membrane. The
-        current depends on the synaptic conductivities and the membrane
-        potential.
-
-        dt: simulation timestep to be used.
-        A: pre synaptic neuron population activity vector.
-        E_pos: encoders for the positive coefficients in the weight matrix. If
-        D_pos is not specified (is None), this parameter defines the positive
-        weight matrix w_pos instead.
-        E_neg: encoders for the negative coefficients in the weight matrix. If
-        D_neg is not specified (is None), this parameter defines the negative
-        weight matrix w_neg instead.
-        D_pos: decoders for the positive coefficients in the weight matrix.
-        D_neg: decoders for the negative coefficients in the weight matrix.
-        """
-
-        # Process incomming spikes by incrementing the conductivity.
-        # Note: the scaling factor ensures a unit-area below the synaptic
-        # filter.
-        if (D_pos is None) or (D_neg is None):
-            # In this branch, E_pos and E_neg are actually w_pos and w_neg
-            self.g_E = E_pos @ A
-            self.g_I = E_neg @ A
-        else:
-            self.g_E = E_pos @ (D_pos @ A)
-            self.g_I = E_neg @ (D_neg @ A)
-
-        # Calculate the current that is being induced into the membrane.
-        # In an actual implementation, the scaling factors can be
-        # multiplied into the synaptic weights.
-        J = (self.scale_E * self.g_E *
-             (self.e_rev_E - self.voltage) + self.scale_I * self.g_I *
-             (self.e_rev_I - self.voltage))
-
-        # When using this equation, the results must be equivalent to
-        # the LIF model with current based synapse
-        if not self.use_conductance_synapses:
-            J = self.g_E - self.g_I
-
-        return J
+from . import lif_cond
 
 
 def sim_if_cond_exp(decoders,
                     activities,
                     encoders,
                     direct,
-                    bias,
-                    gain,
+                    scale_E,
+                    scale_I,
                     model,
                     dt=1e-4,
                     use_jbias=False,
@@ -166,7 +48,7 @@ def sim_if_cond_exp(decoders,
     directly target the current.
     bias: bias values that should be used for this population.
     gain: gain values that should be used for this population.
-    model: instance of the IfCondExp class defined above. If None
+    model: instance of the LifCond class defined above. If None
     is given, a new instance with default parameters is used, with
     the number of neurons derived from the encoder matrix dimensionality.
     use_jbias: if True, uses an external current source for the bias,
@@ -175,15 +57,19 @@ def sim_if_cond_exp(decoders,
     artificial encoders and decoders.
     """
 
+    # Make sure the input arrays are correct
+    assert len(encoders) > 0
+    assert len(decoders) == len(encoders) == len(direct)
+
     # Fetch the number of neurons from the encoder dimensionality
-    n_neurons = model.n_neurons
+    for i in range(1, len(encoders)):
+        assert encoders[i].shape[0] == encoders[i - 1].shape[0]
+    n_neurons = encoders[0].shape[0]
 
     # Make sure the dimensions in the input are correct
-    assert (len(decoders) == len(encoders))
     for i in range(len(decoders)):
-        assert (encoders[i].shape[0] == bias.shape[0] == gain.shape[0] ==
-                model.n_neurons)
-        assert (encoders[i].shape[1] == decoders[i].shape[0])
+        assert encoders[i].shape[0] == scale_E.shape[0] == scale_I.shape[0]
+        assert encoders[i].shape[1] == decoders[i].shape[0]
 
     def factorise_weights(weights):
         # Perform a SVD of the weight matrix
@@ -232,7 +118,7 @@ def sim_if_cond_exp(decoders,
     weights = [None] * len(decoders)
     direct_weights = [None] * len(decoders)
     for i in range(len(decoders)):
-        W = (encoders[i] * gain.reshape(-1, 1)) @ decoders[i]
+        W = encoders[i] @ decoders[i]
         if direct[i]:  # Silence direct connections
             direct_weights[i] = W
             weights[i] = np.zeros(W.shape)
@@ -243,12 +129,12 @@ def sim_if_cond_exp(decoders,
     direct_weights = np.concatenate(direct_weights, axis=1)
 
     # Split the weight matrix into the positive and negative part
-    if not use_jbias:
-        try:
-            weights += decode_bias(bias, activities)
-        except np.linalg.linalg.LinAlgError:
-            use_jbias = True  # The activity matrix is singular
-            pass
+    #    if not use_jbias:
+    #        try:
+    #            weights += decode_bias(bias, activities)
+    #        except np.linalg.linalg.LinAlgError:
+    #            use_jbias = True  # The activity matrix is singular
+    #            pass
     w_pos = weights * (weights > 0)
     w_neg = -weights * (weights < 0)
 
@@ -259,24 +145,28 @@ def sim_if_cond_exp(decoders,
         E_pos, D_pos = factorise_weights(w_pos)
         E_neg, D_neg = factorise_weights(w_neg)
 
+    voltage = np.zeros(n_neurons)
+    refractory_time = np.zeros(n_neurons)
+    spiked = np.zeros(n_neurons)
+
     def simulator(t, A):
         # Calculate the current current induced by the conductance based
         # synapses
-        if use_factorised_weights:
-            J = model.calc_J(A, E_pos, E_neg, D_pos, D_neg)
-        else:
-            J = model.calc_J(A, w_pos, w_neg)
+        #        if use_factorised_weights:
+        #            J = model.calc_J(A, E_pos, E_neg, D_pos, D_neg)
+        #        else:
+        #            J = model.calc_J(A, w_pos, w_neg)
 
         # If jbias is used instead of the decoding, add it to the neurons
-        if use_jbias:
-            J += bias
+        #        if use_jbias:
+        #            J += bias
 
-        # Process direct inputs
-        J += direct_weights @ A
+        gE = np.maximum(0, scale_E * (1 + (w_pos - w_neg) @ A + direct_weights @ A))
+        gI = np.maximum(0, scale_I * (1 - (w_pos - w_neg) @ A + direct_weights @ A))
 
         # Call the LIF neuron model with the calculated J
-        spiked = np.zeros(n_neurons)
-        model.step_math(dt, J, spiked, model.voltage, model.refractory_time)
+        spiked[:] = 0
+        model.step_math(dt, gE, gI, spiked, voltage, refractory_time)
 
         return spiked
 
@@ -303,10 +193,13 @@ def extract_neuron_parameters(ens, sim):
     return x_intercept, max_rate
 
 
-def calculate_conductance_neuron_parameters(x_intercept, max_rate, tau_ref=2e-3,
-                                            e_rev_E=4.33, e_rev_I=-0.33):
+def calculate_conductance_neuron_parameters(x_intercept,
+                                            max_rate,
+                                            tau_ref=2e-3,
+                                            e_rev_E=4.33,
+                                            e_rev_I=-0.33):
     """
-    Calculates the parameters tau_rc, scale_E, and scale_I for a conductance
+    Calculates the parameters gL, scale_E, and scale_I for a conductance
     based neuron under the assumption that GE(x) = 1 + x and GI(x) = 1 - x.
 
     x_intercept: vector describing the x_intercepts of inidividual neurons.
@@ -324,62 +217,130 @@ def calculate_conductance_neuron_parameters(x_intercept, max_rate, tau_ref=2e-3,
     EE = e_rev_E
     EI = e_rev_I
     XI = x_intercept
-    GL = -np.log(
-        ((-EE * XI + 2 * EE + XI - 2) / (3 * EE))) * (EE * XI + EE - XI - 1) / (
+    GL = -np.log((
+        (-EE * XI + 2 * EE + XI - 2) / (3 * EE))) * (EE * XI + EE - XI - 1) / (
             (1 / max_rate - tau_ref) * (EE * XI + EE - XI + 2))
     scale_E = (3 * GL) / (2 * (EE * XI + EE - XI - 1))
     scale_I = (1 * GL) / (2 * (EI * XI - EI - XI + 1))
 
-    return (1 / GL, a, b)
+    return (GL, scale_E, scale_I)
 
 
-def lif_cond_rate(GL, GE, GI, tau_ref=2e-3, EE=4.33, EI=-0.33):
+def lif_cond_rate(GL, GE, GI, tau_ref=2e-3, EE=4.33, EI=-0.33, EL=0.0):
     G_tot = GL + GE + GI
     e_eq = (GL * EL + GE * EE + GI * EI) / G_tot
 
-    mask = e_eq > EL
+    mask = e_eq > 1
     exponent = mask * (e_eq - 1) / (mask * e_eq + (1 - mask))
     mask = exponent > 1e-15
     t_spike = -np.log(mask * exponent + (1 - mask)) / G_tot
     return mask / (tau_ref + t_spike)
 
 
-def solve_for_nonneg_weigths(offs, scale, A, Y, E):
-    import scipy.optimize
+def solve_for_nonneg_weigths(offs, scale, A, Y, E, sigma):
+    from scipy.optimize import nnls
+
+    Y = (offs + scale * (E @ Y)).clip(0, None)
+    print("Y", Y.shape)
+    print("A", A.shape)
+    print("E", E.shape)
+    print("sigma", sigma)
 
 
-def calculate_conductance_weights(sim, conn, n_post_in, tau_rc, a, b, tau_ref=2e-3, EE=4.33, EI=-0.33, rng=None):
+#    d = Y.shape[1]
+
+#    GA = A.T @ A
+#    np.fill_diagonal(GA, GA.diagonal() + A.shape[0] * sigma**2)
+#    GY = A.T @ Y
+
+#    X = np.zeros((n, d))
+
+
+def get_activities(sim,
+                   ens,
+                   eval_points,
+                   is_conductance_ensemble=False,
+                   e_rev_E=4.33,
+                   e_rev_I=-0.33):
+    import nengo.builder.ensemble
+
+    if is_conductance_ensemble:
+        # Fetch the original x_intercept and max_rate for the pre population
+        # and calculate the corresponding parameters for a conductance based
+        # population.
+        x_intercept, max_rate = extract_neuron_parameters(ens, sim)
+        tau_ref = ens.neuron_type.tau_ref
+        GL, scale_E, scale_I = calculate_conductance_neuron_parameters(
+            x_intercept,
+            max_rate,
+            tau_ref=tau_ref,
+            e_rev_E=e_rev_E,
+            e_rev_I=e_rev_I)
+        tau_rc = 20e-3
+
+        # Multiply the evaluation points with the encoders in order to get some
+        # scalar values
+        EX = eval_points @ sim.data[ens].encoders.T
+
+        # Calculate the activities of the pre-population
+        GE = np.maximum(0, scale_E * (1 + EX))
+        GI = np.maximum(0, scale_I * (1 - EX))
+        A = lif_cond_rate(GL, GE, GI, tau_ref, e_rev_E, e_rev_I)
+    else:
+        # Otherwise, if the pre-population is just a normal lif population, use
+        # the normal activities function
+        A = nengo.builder.ensemble.get_activities(sim.data[ens], ens,
+                                                  eval_points)
+
+    return A
+
+
+def calculate_weights(sim,
+                      conn,
+                      pre_is_cond,
+                      post_is_cond,
+                      n_post_in,
+                      e_rev_E=4.33,
+                      e_rev_I=-0.33):
+    """
+    Used internally to calculates the weights of a connection. Takes different
+    tuning curves for current and conductance based ensembles into account.
+
+    sim: simulation object.
+    conn: connection object.
+    pre_is_cond: True if the pre-population is a conductance based ensemble.
+    post_is_cond: True if the post-population is a conductance based ensemble.
+    If set to True, this function will return two weight matrices, the positive
+    weight matrix w_pos and the negative weight matrix w_neg.
+    n_post_in: number of inputs for the post-synaptic ensemble. Only relevant if
+    post_is_cond is True.
+    e_rev_E, e_rev_I: excitatory and inhibitory reversal potential of the pre-
+    and post-synaptic population. Only relevant if either of them is a
+    conductance based population.
+    """
+
     # Fetch the pre- and post-object
     ens_pre = conn.pre_obj
     ens_post = conn.post_obj
 
     # Make sure the pre-population object is an ensemble
-    assert(isinstance(ens_pre, nengo.Ensemble))
+    # TODO: Should work with anything.
+    assert (isinstance(ens_pre, nengo.Ensemble))
 
-    # Fetch the original evaluation points
+    # Fetch the original evaluation points and corresponding activities
     eval_points = sim.data[ens_pre].eval_points
-
-    # Multiply the evaluation points with the encoders in order to get a scalar
-    # per neuron
-    EX = eval_points @ sim.data[ens_pre].encoders.T
-
-    # Calculate the activities of the pre-population.
-    # TODO: Radius?
-    GL = 1 / tau_rc
-    GE = np.maximum(0, a * (1 + EX))
-    GI = np.maximum(0, b * (1 - EX))
-    A = lif_cond_rate(GL, GE, GI, tau_ref, EE, EI)
+    A = get_activities(sim, ens_pre, eval_points, pre_is_cond)
 
     # Get the target values
     from nengo.build.connection import get_targets
     targets = get_targets(conn, eval_points)
 
-    # Encode the target values using the post-population
-    EY = sim.data[ens_post].encoders @ targets
-
     # Solve for the excitatory and the inhibitory weights
     solver = nengo.solvers.NnlsL2(weights=True, reg=0.1)
-    w_pos = solver(A, 1 + )
+    w_pos = solve_for_nonneg_weigths(1 / n_post_in, 1, A, Y, E,
+                                     np.max(A) * 0.1)
+    w_neg = solve_for_nonneg_weigths(1 / n_post_in, -1, A, Y, E,
+                                     np.max(A) * 0.1)
 
 
 def transform_ensemble(
@@ -413,8 +374,6 @@ def transform_ensemble(
     use_jbias: if True, uses an external current source for the bias,
     otherwise decodes the bias from the pre-synaptic population.
     """
-
-    from nengo.builder.ensemble import get_activities
 
     # Make sure the ensemble this transformation operates on has either the
     # neuron type LIF or LIFRate. Fetch gains, biases, and encoders from the
@@ -479,7 +438,7 @@ def transform_ensemble(
         # Fetch the activities required for bias decoding
         if not use_jbias:
             if isinstance(pre_obj, nengo.Ensemble):
-                activities[i] = get_activities(sim.data[pre_obj], pre_obj,
+                activities[i] = get_activities(sim, pre_obj,
                                                sim.data[pre_obj].eval_points)
             elif isinstance(pre_obj, nengo.Node):
                 activities[i] = np.zeros((1, pre_obj.size_out))
@@ -499,14 +458,21 @@ def transform_ensemble(
         n_dims_in += n_dims
 
     # Create the IfCondExp instance
-    model = IfCondExp(
-        ens.n_neurons,
-        tau_rc=ens.neuron_type.tau_rc,
+    x_intercept, max_rate = extract_neuron_parameters(ens, sim)
+    gL, scale_E, scale_I = calculate_conductance_neuron_parameters(
+        x_intercept,
+        max_rate,
+        ens.neuron_type.tau_ref,
+        e_rev_E=e_rev_E,
+        e_rev_I=e_rev_I)
+    model = lif_cond.LifCond(
+        gL=gL,
         tau_ref=ens.neuron_type.tau_ref,
         e_rev_E=e_rev_E,
         e_rev_I=e_rev_I,
-        use_linear_avg_pot=use_linear_avg_pot,
-        use_conductance_synapses=use_conductance_synapses)
+#        use_linear_avg_pot=use_linear_avg_pot,
+#        use_conductance_synapses=use_conductance_synapses
+    )
 
     # Assemble the simulator node
     node = nengo.Node(
@@ -517,8 +483,8 @@ def transform_ensemble(
             activities=activities,
             encoders=encoders,
             direct=direct,
-            bias=bias,
-            gain=gain,
+            scale_E=scale_E,
+            scale_I=scale_I,
             model=model,
             dt=sim.dt,
             use_jbias=use_jbias,
