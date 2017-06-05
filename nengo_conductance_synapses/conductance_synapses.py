@@ -117,52 +117,28 @@ def sim_if_cond_exp(decoders,
     # Calculate the weight matrix for each input independently
     weights = [None] * len(decoders)
     direct_weights = [None] * len(decoders)
+    n_in_total = len(decoders)
+    n_in_direct = 0
     for i in range(len(decoders)):
         W = encoders[i] @ decoders[i]
         if direct[i]:  # Silence direct connections
             direct_weights[i] = W
             weights[i] = np.zeros(W.shape)
+            n_direct += 1
         else:
             direct_weights[i] = np.zeros(W.shape)
             weights[i] = W
     weights = np.concatenate(weights, axis=1)
     direct_weights = np.concatenate(direct_weights, axis=1)
 
-    # Split the weight matrix into the positive and negative part
-    #    if not use_jbias:
-    #        try:
-    #            weights += decode_bias(bias, activities)
-    #        except np.linalg.linalg.LinAlgError:
-    #            use_jbias = True  # The activity matrix is singular
-    #            pass
-    w_pos = weights * (weights > 0)
-    w_neg = -weights * (weights < 0)
-
-    # Factorise the weight matrices into positive and negative encoders/
-    # decoders (this is not really required, but it speeds up the following
-    # computations)
-    if use_factorised_weights:
-        E_pos, D_pos = factorise_weights(w_pos)
-        E_neg, D_neg = factorise_weights(w_neg)
 
     voltage = np.zeros(n_neurons)
     refractory_time = np.zeros(n_neurons)
     spiked = np.zeros(n_neurons)
 
     def simulator(t, A):
-        # Calculate the current current induced by the conductance based
-        # synapses
-        #        if use_factorised_weights:
-        #            J = model.calc_J(A, E_pos, E_neg, D_pos, D_neg)
-        #        else:
-        #            J = model.calc_J(A, w_pos, w_neg)
-
-        # If jbias is used instead of the decoding, add it to the neurons
-        #        if use_jbias:
-        #            J += bias
-
-        gE = np.maximum(0, scale_E * (1 + (w_pos - w_neg) @ A + direct_weights @ A))
-        gI = np.maximum(0, scale_I * (1 - (w_pos - w_neg) @ A + direct_weights @ A))
+        gE = np.maximum(0, scale_E * (WgE @ A + n_direct / n_in_total + direct_weights @ A))
+        gI = np.maximum(0, scale_I * (WgI @ A + n_direct / n_in_total - direct_weights @ A))
 
         # Call the LIF neuron model with the calculated J
         spiked[:] = 0
@@ -264,6 +240,8 @@ def get_activities(sim,
                    e_rev_I=-0.33):
     import nengo.builder.ensemble
 
+    GL = None
+
     if is_conductance_ensemble:
         # Fetch the original x_intercept and max_rate for the pre population
         # and calculate the corresponding parameters for a conductance based
@@ -276,7 +254,6 @@ def get_activities(sim,
             tau_ref=tau_ref,
             e_rev_E=e_rev_E,
             e_rev_I=e_rev_I)
-        tau_rc = 20e-3
 
         # Multiply the evaluation points with the encoders in order to get some
         # scalar values
