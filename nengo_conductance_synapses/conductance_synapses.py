@@ -21,6 +21,7 @@ import nengo
 import numpy as np
 
 from . import lif_cond
+from . import lif_cond_utils
 
 
 def sim_if_cond_exp(decoders,
@@ -130,7 +131,6 @@ def sim_if_cond_exp(decoders,
             weights[i] = W
     weights = np.concatenate(weights, axis=1)
     direct_weights = np.concatenate(direct_weights, axis=1)
-
 
     voltage = np.zeros(n_neurons)
     refractory_time = np.zeros(n_neurons)
@@ -248,20 +248,18 @@ def get_activities(sim,
         # population.
         x_intercept, max_rate = extract_neuron_parameters(ens, sim)
         tau_ref = ens.neuron_type.tau_ref
-        GL, scale_E, scale_I = calculate_conductance_neuron_parameters(
-            x_intercept,
-            max_rate,
-            tau_ref=tau_ref,
-            e_rev_E=e_rev_E,
-            e_rev_I=e_rev_I)
+        GL = 1 / ens.neuron_type.tau_rc
+
+        scale_E, scale_I, bias_E, bias_I = lif_cond_utils.optimize_scale_E_scale_I_bias_E_bias_I(
+            x_intercept, max_rate, gL=50, e_rev_E=e_rev_E, e_rev_I=e_rev_I, tau_ref=tau_ref)
 
         # Multiply the evaluation points with the encoders in order to get some
         # scalar values
         EX = eval_points @ sim.data[ens].encoders.T
 
         # Calculate the activities of the pre-population
-        GE = np.maximum(0, scale_E * (1 + EX))
-        GI = np.maximum(0, scale_I * (1 - EX))
+        GE = np.maximum(0, scale_E * (bias_E + EX))
+        GI = np.maximum(0, scale_I * (bias_I - EX))
         A = lif_cond_rate(GL, GE, GI, tau_ref, e_rev_E, e_rev_I)
     else:
         # Otherwise, if the pre-population is just a normal lif population, use
@@ -447,8 +445,8 @@ def transform_ensemble(
         tau_ref=ens.neuron_type.tau_ref,
         e_rev_E=e_rev_E,
         e_rev_I=e_rev_I,
-#        use_linear_avg_pot=use_linear_avg_pot,
-#        use_conductance_synapses=use_conductance_synapses
+        #        use_linear_avg_pot=use_linear_avg_pot,
+        #        use_conductance_synapses=use_conductance_synapses
     )
 
     # Assemble the simulator node
@@ -586,7 +584,7 @@ def transform(
     # Create a simulator object with the given dt if None has been given.
     connection_translation = {}
     with nengo.simulator.Simulator(network_src, dt=dt) as sim, \
-         transform_network(network_src) as network_tar:
+            transform_network(network_src) as network_tar:
         # Rebuild all connections in the network
         for connection in network_src.all_connections:
             pre_obj, post_obj = fetch_pre_post(connection)
