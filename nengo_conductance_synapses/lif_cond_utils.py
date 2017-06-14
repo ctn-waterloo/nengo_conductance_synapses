@@ -118,7 +118,8 @@ def calc_gE_for_rate(rate,
         step = 1
         while np.abs(step) > atol:
             e = np.exp(-s * (gL + gI + x[i]))
-            f = (x[i] * EE + gI * EI) * e - x[i] * EE - gI * EI + x[i] + gI + gL
+            f = (x[i] * EE + gI * EI) * e - x[i] * \
+                EE - gI * EI + x[i] + gI + gL
             df = (-x[i] * EE * s - gI * EI * s + EE) * e - EE + 1
 
             step = f / df
@@ -197,7 +198,7 @@ def optimize_scale_E_scale_I_bias_E_bias_I(x_intercept,
 
             lambda_ = 1e-5
             print(xi, b, c, d, t, t_tar)
-            return 1 / lambda_ * (t - t_tar)**2  #+ lambda_ * (a * c + b * d)
+            return 1 / lambda_ * (t - t_tar)**2  # + lambda_ * (a * c + b * d)
 
         bounds = [(0, 100), (1, 100), (1, 100)]
         x, _, _ = scipy.optimize.fmin_l_bfgs_b(
@@ -256,33 +257,43 @@ def calc_scale_I(scale_E, gL, x_intercept, e_rev_E=4.33, e_rev_I=-0.33):
                 e_rev_I * x_intercept + e_rev_I - x_intercept + 1)
 
 
-def calc_scale_E_scale_I_bias_I(x_intercept,
-                                max_rate,
-                                gL,
-                                e_rev_E=4.33,
-                                e_rev_I=-0.33,
-                                tau_ref=2e-3):
+def calc_a_b_c_d(x_intercept,
+                 max_rate,
+                 gL,
+                 e_rev_E=4.33,
+                 e_rev_I=-0.33,
+                 tau_ref=2e-3):
     EE = e_rev_E
     EI = e_rev_I
     xi = x_intercept
 
-    scale_I = -1
-    gI = 0
-#    while scale_I < 0:
-    gEmax = calc_gE_for_rate(max_rate, gL, gI, e_rev_E, e_rev_I, tau_ref)
+    def solve_for_gEoffs(gEoffs):
+        alpha = - (EI - 1) / (EE - 1)
+        coff = -gEoffs / (xi - 1)
+        doff = (EE * gEoffs * xi - gEoffs * xi + gL * xi - gL) / ((EE - 1) * (xi - 1))
 
-    sI = xi * EI - EI - xi + 1
-    sE = xi * EE + EE - xi - 1
+        c = (doff - coff) / (2 * alpha)
+        d = abs(c)
+        a = alpha * c + coff
+        b = alpha * d + doff
 
-    scale_E = gEmax / 2
-    scale_I = (sE * gEmax + 2 * (EI * gI - gI - gL)) / (2 * sI)
-    bias_I = (sE * gEmax + 2 * (gI * xi *
-                                (EI - 1) - gL)) / (sE * gEmax + 2 *
-                                                   (gI * (EI - 1) - gL))
+        return a, b, c, d
 
-#        gI = gI + 10
+    gEoffs = calc_gE_for_rate(max_rate,
+                 gL,
+                 0,
+                 e_rev_E,
+                 e_rev_I,
+                 tau_ref)
+    for i in range(10):
+        a, b, c, d = solve_for_gEoffs(gEoffs)
 
-    return scale_E, scale_I, bias_I
+        gI = c + d
+        gE = calc_gE_for_rate(max_rate, gL, gI, e_rev_E, e_rev_I)
+        gEoffs = (gE * EE + gI * EI - gE - gI - gL) / (EE - 1)
+        print(gEoffs)
+
+    return a, b, c, d
 
 
 def solve_max_rate_x_intercept(x_intercept,
@@ -301,16 +312,17 @@ def solve_max_rate_x_intercept(x_intercept,
     gL: if None, calculates a matching gL. Otherwise, keeps gL constant.
     """
 
-    bias_E, bias_I = 1, 1
-    if gL is None:
-        gL, scale_E, scale_I = calc_gL_scale_E_scale_I(
-            x_intercept, max_rate, e_rev_E, e_rev_I, tau_ref)
-    else:
-        scale_E, scale_I, bias_I = calc_scale_E_scale_I_bias_I(
-            x_intercept, max_rate, gL, e_rev_E, e_rev_I, tau_ref)
+#    bias_E, bias_I = 1, 1
+#    if gL is None:
+#        gL, scale_E, scale_I = calc_gL_scale_E_scale_I(
+#            x_intercept, max_rate, e_rev_E, e_rev_I, tau_ref)
+#    else:
+    a, b, c, d = calc_a_b_c_d(
+        x_intercept, max_rate, gL, e_rev_E, e_rev_I, tau_ref)
+    print(a, b, c, d)
 
 #        scale_E, scale_I, bias_E, bias_I = optimize_scale_E_scale_I_bias_E_bias_I(
 #            x_intercept, max_rate, gL, e_rev_E, e_rev_I, tau_ref)
 
-    return gL, scale_E, scale_I, bias_E, bias_I
+    return gL, a, b, c, d
 
