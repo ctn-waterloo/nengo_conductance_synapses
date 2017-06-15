@@ -150,72 +150,6 @@ def calc_gE_for_intercept(gL, gI, e_rev_E=4.33, e_rev_I=-0.33):
     return (gI * e_rev_I - gI - gL) / (1 - e_rev_E)
 
 
-def optimize_scale_E_scale_I_bias_E_bias_I(x_intercept,
-                                           max_rate,
-                                           gL=50,
-                                           e_rev_E=4.33,
-                                           e_rev_I=-0.33,
-                                           tau_ref=2e-3):
-    """
-    Optimizes scale_E, scale_I, bias_E, and bias_I for the given x_intercept and
-    max_rate.
-    """
-
-    import scipy.optimize
-
-    x_intercept = np.atleast_1d(x_intercept)
-    max_rate = np.atleast_1d(max_rate)
-    tau_ref = np.atleast_1d(tau_ref)
-    assert len(x_intercept) == len(
-        max_rate), "x_intercept and max_rate must have the same length"
-
-    N = len(x_intercept)
-    EE = e_rev_E
-    EI = e_rev_I
-
-    t_spike_tar = 1 / max_rate - tau_ref
-    assert np.all(t_spike_tar >
-                  0), "max_rate must be smaller than the inverse of tau_ref"
-
-    def optimize_single(xi, t_tar):
-        def calc_a(b, c, d):
-            return - (b * (EI * d - EI * xi - d + xi) - gL) / \
-                (EE * c + EE * xi - c - xi)
-
-        def f(v):
-            b, c, d = v
-            a = calc_a(b, c, d)
-
-            gE = a * (c + 1)
-            gI = b * (d - 1)
-
-            g_tot = gL + gE + gI
-            e_eq = (gE * EE + gI * EI) / g_tot
-
-            t = 0
-            if e_eq > 1:
-                t = -np.log1p(-1 / e_eq) / g_tot
-
-            lambda_ = 1e-5
-            print(xi, b, c, d, t, t_tar)
-            return 1 / lambda_ * (t - t_tar)**2  # + lambda_ * (a * c + b * d)
-
-        bounds = [(0, 100), (1, 100), (1, 100)]
-        x, _, _ = scipy.optimize.fmin_l_bfgs_b(
-            f, [1, 1, 1], bounds=bounds, approx_grad=True)
-        b, c, d = x
-        return calc_a(b, c, d), b, c, d
-
-    scale_E, scale_I = np.zeros(N), np.zeros(N)
-    bias_E, bias_I = np.zeros(N), np.zeros(N)
-
-    for i in range(N):
-        scale_E[i], scale_I[i], bias_E[i], bias_I[i] = \
-            optimize_single(x_intercept[i], t_spike_tar[i])
-
-    return scale_E, scale_I, bias_E, bias_I
-
-
 def calc_gL_scale_E_scale_I(x_intercept,
                             max_rate,
                             e_rev_E=4.33,
@@ -237,61 +171,61 @@ def calc_gL_scale_E_scale_I(x_intercept,
     return (GL, scale_E, scale_I)
 
 
-def calc_scale_E(scale_I, gL, x_intercept, e_rev_E=4.33, e_rev_I=-0.33):
-    """
-    For a given scale_I, gL, and x_intercept calculates the corresponding
-    scale_E.
-    """
-    return (scale_I *
-            (e_rev_I * x_intercept - e_rev_I - x_intercept + 1) + gL) / (
-                e_rev_E * x_intercept + e_rev_E - x_intercept - 1)
-
-
-def calc_scale_I(scale_E, gL, x_intercept, e_rev_E=4.33, e_rev_I=-0.33):
-    """
-    For a given scale_E, gL, and x_intercept calculates the corresponding
-    scale_I.
-    """
-    return (scale_E *
-            (e_rev_E * x_intercept + e_rev_E - x_intercept - 1) - gL) / (
-                e_rev_I * x_intercept + e_rev_I - x_intercept + 1)
-
-
-def calc_a_b_c_d(x_intercept,
+def calc_optimal_a_b_c_d(x_intercept,
                  max_rate,
                  gL,
                  e_rev_E=4.33,
                  e_rev_I=-0.33,
                  tau_ref=2e-3):
+    """
+    Calculates the optimal gains and biases for the affine gE(x) and gI(x)
+    equations
+
+        gE(x) = a * x + b
+        gI(x) = c * x + d
+
+    for the given x_intercept and max_rate.
+    """
+
     EE = e_rev_E
     EI = e_rev_I
     xi = x_intercept
 
     def solve_for_gEoffs(gEoffs):
         alpha = - (EI - 1) / (EE - 1)
-        coff = -gEoffs / (xi - 1)
-        doff = (EE * gEoffs * xi - gEoffs * xi + gL * xi - gL) / ((EE - 1) * (xi - 1))
+        a0 = -gEoffs / (xi - 1)
+        b0 = (EE * gEoffs * xi - gEoffs * xi + gL * xi - gL) / ((EE - 1) * (xi - 1))
 
-        c = (doff - coff) / (2 * alpha)
-        d = abs(c)
-        a = alpha * c + coff
-        b = alpha * d + doff
+        solutions = np.array([
+            [0, 0],
+            [-(a0 + b0) / (2 * alpha), -(a0 + b0) / (2 * alpha)],
+            [-(a0 - b0) / (2 * alpha),  (a0 - b0) / (2 * alpha)],
+            [-a0 / alpha, -b0 / alpha],
+        ])
+
+        c, d = solutions[np.argmax(solutions[:, 1]), :]
+        a = alpha * c + a0
+        b = alpha * d + b0
 
         return a, b, c, d
 
-    gEoffs = calc_gE_for_rate(max_rate,
+    def calc_gEoffs(gE, gI):
+        return gE - (gL - gI * (EI - 1)) / (EE - 1)
+
+    gEoffs = np.inf
+    gEoffsNew = calc_gEoffs(calc_gE_for_rate(max_rate,
                  gL,
                  0,
                  e_rev_E,
                  e_rev_I,
-                 tau_ref)
-    for i in range(10):
+                 tau_ref), 0)
+    while np.abs(gEoffs - gEoffsNew) > 1e-3:
+        gEoffs = gEoffsNew
         a, b, c, d = solve_for_gEoffs(gEoffs)
 
         gI = c + d
         gE = calc_gE_for_rate(max_rate, gL, gI, e_rev_E, e_rev_I)
-        gEoffs = (gE * EE + gI * EI - gE - gI - gL) / (EE - 1)
-        print(gEoffs)
+        gEoffsNew = calc_gEoffs(gE, gI)
 
     return a, b, c, d
 
@@ -312,17 +246,14 @@ def solve_max_rate_x_intercept(x_intercept,
     gL: if None, calculates a matching gL. Otherwise, keeps gL constant.
     """
 
-#    bias_E, bias_I = 1, 1
-#    if gL is None:
-#        gL, scale_E, scale_I = calc_gL_scale_E_scale_I(
-#            x_intercept, max_rate, e_rev_E, e_rev_I, tau_ref)
-#    else:
-    a, b, c, d = calc_a_b_c_d(
-        x_intercept, max_rate, gL, e_rev_E, e_rev_I, tau_ref)
-    print(a, b, c, d)
-
-#        scale_E, scale_I, bias_E, bias_I = optimize_scale_E_scale_I_bias_E_bias_I(
-#            x_intercept, max_rate, gL, e_rev_E, e_rev_I, tau_ref)
+    if gL is None:
+        gL, scale_E, scale_I = calc_gL_scale_E_scale_I(
+            x_intercept, max_rate, e_rev_E, e_rev_I, tau_ref)
+        a, b = scale_E, scale_E
+        c, d = scale_I, scale_I
+    else:
+        a, b, c, d = calc_optimal_a_b_c_d(
+            x_intercept, max_rate, gL, e_rev_E, e_rev_I, tau_ref)
 
     return gL, a, b, c, d
 
