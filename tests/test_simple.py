@@ -21,11 +21,12 @@ import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import nengo
-import nengo_conductance_synapses as conductance_synapses
+#import nengo_conductance_synapses as conductance_synapses
+import nengo_conductance_synapses.preprocess as preprocess
 import numpy as np
 
 T = 1.0
-dt = 1e-4
+dt = 1e-3
 
 
 def rmse(x1, x2):
@@ -37,15 +38,12 @@ def transform_and_test(test, model_src, tar):
     with model_src:
         pout_src = nengo.Probe(tar)
 
+    for ens in model_src.all_ensembles:
+        ens.seed = 1
+
     # Transform the model
-    with conductance_synapses.transform(
-            model_src,
-            dt=dt,
-            use_conductance_synapses=False,
-            use_jbias=True,
-            use_factorised_weights=False,
-            seed=472563) as model_trafo:
-        pout_trafo = nengo.Probe(tar)
+    model_trafo, probes = preprocess.preprocess(model_src)
+    pout_trafo = probes[pout_src]
 
     # Run the source model
     with nengo.Simulator(model_src, dt=dt) as sim:
@@ -55,7 +53,7 @@ def transform_and_test(test, model_src, tar):
     # Run the transformed model
     with nengo.Simulator(model_trafo, dt=dt) as sim:
         sim.run(T)
-        data_trafo = sim.data[pout_trafo]
+        data_trafo = np.array(pout_trafo.data) #sim.data[pout_trafo]
 
     # Make sure the traces are almost equal. Note that conductance based
     # synapses were deactivated when the transform function was called. Only

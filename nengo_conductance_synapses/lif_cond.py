@@ -19,16 +19,18 @@
 import nengo
 import numpy as np
 
+
 class LifCond:
     """
-    The LifRateCond class represents a population of lif neurons with
+    The LifRateCond class represents a population of LIF neurons with
     conductance based synapses. This class is used as storage for neuron and
     synapse parameters.
     """
 
     def __init__(
             self,
-            gL=50.0,
+            tau_rc=20e-3,
+            gL=None,
             tau_ref=2.0e-3,
             e_rev_E=4.33,  # equiv. to 0mV for v_rest=-65mV, v_th=-50mV
             e_rev_I=-0.33  # equiv. to -70mV
@@ -40,19 +42,28 @@ class LifCond:
         excitatory and inhibitory synapses for each individual neuron.
 
         n_neurons: number of neurons in the population.
-        tau_rc: membrane time constant of the underlying LIF neuron
+        tau_rc: neuron membrane time constant used to derive the parameter gL.
+        This value can be set to None, in which case gL needs to be specified.
+        gL: membrane leak conductance. Assuming a membrane capacitance of one,
+        this value is set to one over tau_rc. If gL is set to a value other than
+        None, tau_rc must be None.
         tau_ref: refractory period of the underlying LIF neuron
         e_rev_E: reversal potential of the excitatory synapse. Potentials are
         normalised in such a way that a value zero corresponds to the resting
         potential and a value of one to the threshold potential.
         e_rev_I: reversal potential of the inhibitory synapse.
-        use_linear_avg_pot: if True, estimates the average membrane potential
-        using a simple linear estimation. If False, takes the non-linearity in
-        the transition between 0 and 1 into account.
         """
 
+        assert (tau_rc is None) != (gL is None), \
+            'Exactly one of gL, tau_rc must have a valid value.'
+
         # Copy all parameters
-        self.gL = gL
+        if tau_rc is None:
+            self.gL = gL
+            self.tau_rc = 1 / gL
+        else:
+            self.tau_rc = tau_rc
+            self.gL = 1 / tau_rc
         self.tau_ref = tau_ref
         self.e_rev_E = e_rev_E
         self.e_rev_I = e_rev_I
