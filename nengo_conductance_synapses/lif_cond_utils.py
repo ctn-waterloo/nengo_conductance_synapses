@@ -257,3 +257,100 @@ def solve_max_rate_x_intercept(x_intercept,
 
     return gL, a, b, c, d
 
+
+def get_activities(eval_points,
+                   encoders,
+                   a,
+                   b,
+                   c,
+                   d,
+                   gL,
+                   tau_ref=2e-3,
+                   e_rev_E=4.33,
+                   e_rev_I=-0.33):
+    """
+    Calculates the activites of a neuron population for the given evaluation
+    points. Parameters are the eval_points, the neuron encoders, as well as the
+    population parameters a, b, c, d, tau_rc, tau_ref.
+
+    eval_points: matrix containing X vectors for which the activities should be
+    evaluated.
+    encoders: encoder matrix of this neuron population.
+    a: excitatory conductance gain.
+    b: excitatory conductance offset.
+    c: inhibitory conductance gain.
+    d: inhibitory conductance offset.
+    tau_rc: membrane time constant.
+    tau_ref: refractory period.
+    e_rev_E: excitatory reversal potential.
+    e_rev_I: inhibitory reversal potential.
+    """
+    X = eval_points @ encoders
+    gE = np.maximum(0, a[None, :] * X + b[None, :])
+    gI = np.maximum(0, c[None, :] * X + d[None, :])
+
+    return lif_cond_rate(gL, gE, gI, e_rev_E, e_rev_I, tau_ref)
+
+
+def solve_weight_matrices(pre_activities,
+                          targets,
+                          encoders,
+                          a,
+                          b,
+                          c,
+                          d,
+                          reg=0.1,
+                          non_negative=True):
+    """
+    Calculates the excitatory and inhibitory weight matrices such that the post
+    population of a connection represents the target value given whenever the
+    pre-population has the given activities.
+    """
+
+    import scipy.optimize
+
+    m = pre_activities.shape[0]  # Number of samples
+    Npre = pre_activities.shape[1]  # Number of neurons in the pre-population
+    Npost = encoders.shape[1]  # Number of neurons in the post-population
+    D = encoders.shape[0]  # Dimensions represented in the post-population
+
+    a, b, c, d = (np.atleast_1d(a), np.atleast_1d(b), np.atleast_1d(c),
+                  np.atleast_1d(d))
+    assert a.ndim == b.ndim == c.ndim == d.ndim == 1, \
+        "Parameter vectors a, b, c, d must be one-dimensional"
+    assert a.shape[0] == b.shape[0] == c.shape[0] == d.shape[0] == Npost, \
+        "Length of the parameter vectors a, b, c, d does not match the " + \
+        "number of neurons in the post-population"
+    assert D == targets.shape[1], \
+        "Encoder and target dimensionality do not match"
+    assert pre_activities.shape[0] == targets.shape[0], \
+        "Samples must be equal for pre_activities and targets"
+
+    # Calculate the actual target functions for gE and gI. Clip to zero.
+    # The decoded function can never be smaller than zero.
+    YE = targets @ encoders
+    gE_target = np.maximum(0, a[None, :] * YE + b[None, :])
+    gI_target = np.maximum(0, c[None, :] * YE + d[None, :])
+
+    # Fetch the pre-population activities
+    A = pre_activities
+
+    # Form the Gram matrix and apply regularization.
+    # Code adapted from nengo/solvers.py, NnlsL2
+    sigma = np.max(A) * reg
+    GA = A.T @ A
+    np.fill_diagonal(GA, GA.diagonal() + m * sigma**2)
+    GgE = A.T @ gE_target
+    GgI = A.T @ gI_target
+
+    WE, WI = np.zeros((2, Npre, Npost))
+    for i in range(Npost):
+        if non_negative:
+            WE[:, i] = scipy.optimize.nnls(GA, GgE[:, i])[0]
+            WI[:, i] = scipy.optimize.nnls(GA, GgI[:, i])[0]
+        else:
+            WE[:, i] = scipy.optimize.lsq_linear(GA, GgE[:, i]).x
+            WI[:, i] = scipy.optimize.lsq_linear(GA, GgI[:, i]).x
+
+    return WE, WI
+
