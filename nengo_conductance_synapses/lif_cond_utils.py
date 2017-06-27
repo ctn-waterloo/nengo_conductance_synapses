@@ -172,11 +172,12 @@ def calc_gL_scale_E_scale_I(x_intercept,
 
 
 def calc_optimal_a_b_c_d(x_intercept,
-                 max_rate,
-                 gL,
-                 e_rev_E=4.33,
-                 e_rev_I=-0.33,
-                 tau_ref=2e-3):
+                         max_rate,
+                         gL,
+                         e_rev_E=4.33,
+                         e_rev_I=-0.33,
+                         tau_ref=2e-3,
+                         fan_in=1):
     """
     Calculates the optimal gains and biases for the affine gE(x) and gI(x)
     equations
@@ -190,16 +191,18 @@ def calc_optimal_a_b_c_d(x_intercept,
     EE = e_rev_E
     EI = e_rev_I
     xi = x_intercept
+    n = fan_in
 
     def solve_for_gEoffs(gEoffs):
-        alpha = - (EI - 1) / (EE - 1)
+        alpha = -(EI - 1) / (EE - 1)
         a0 = -gEoffs / (xi - 1)
-        b0 = (EE * gEoffs * xi - gEoffs * xi + gL * xi - gL) / ((EE - 1) * (xi - 1))
+        b0 = (EE * gEoffs * xi - gEoffs * xi + gL * xi - gL) / (
+            (EE - 1) * (xi - 1))
 
         solutions = np.array([
             [0, 0],
-            [-(a0 + b0) / (2 * alpha), -(a0 + b0) / (2 * alpha)],
-            [-(a0 - b0) / (2 * alpha),  (a0 - b0) / (2 * alpha)],
+            [-(a0 * n + b0) / (2 * alpha * n), -(a0 * n + b0) / (2 * alpha)],
+            [-(a0 * n - b0) / (2 * alpha * n), (a0 * n - b0) / (2 * alpha)],
             [-a0 / alpha, -b0 / alpha],
         ])
 
@@ -213,12 +216,8 @@ def calc_optimal_a_b_c_d(x_intercept,
         return gE - (gL - gI * (EI - 1)) / (EE - 1)
 
     gEoffs = np.inf
-    gEoffsNew = calc_gEoffs(calc_gE_for_rate(max_rate,
-                 gL,
-                 0,
-                 e_rev_E,
-                 e_rev_I,
-                 tau_ref), 0)
+    gEoffsNew = calc_gEoffs(
+        calc_gE_for_rate(max_rate, gL, 0, e_rev_E, e_rev_I, tau_ref), 0)
     while np.abs(gEoffs - gEoffsNew) > 1e-3:
         gEoffs = gEoffsNew
         a, b, c, d = solve_for_gEoffs(gEoffs)
@@ -236,7 +235,8 @@ def solve_max_rate_x_intercept(x_intercept,
                                e_rev_E=4.33,
                                e_rev_I=-0.33,
                                tau_ref=2e-3,
-                               v_th=1.0):
+                               v_th=1.0,
+                               fan_in=1):
     """
     Calculates scale and bias factors for gL, gE, and gI for a conductance based
     synapse tuning curve with maximum rate max_rate and x-intercept x_intercept.
@@ -252,8 +252,8 @@ def solve_max_rate_x_intercept(x_intercept,
         a, b = scale_E, scale_E
         c, d = scale_I, scale_I
     else:
-        a, b, c, d = calc_optimal_a_b_c_d(
-            x_intercept, max_rate, gL, e_rev_E, e_rev_I, tau_ref)
+        a, b, c, d = calc_optimal_a_b_c_d(x_intercept, max_rate, gL, e_rev_E,
+                                          e_rev_I, tau_ref, fan_in)
 
     return gL, a, b, c, d
 
