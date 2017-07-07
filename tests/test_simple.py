@@ -33,7 +33,7 @@ def rmse(x1, x2):
     return np.sqrt(np.mean((x1 - x2)**2))
 
 
-def transform_and_test(test, model_src, tar):
+def transform_and_test(test, model_src, tar, tolerance=1e-6):
     # Probe the source model
     with model_src:
         pout_src = nengo.Probe(tar)
@@ -42,7 +42,7 @@ def transform_and_test(test, model_src, tar):
         ens.seed = 1
 
     # Transform the model
-    model_trafo, probes = preprocess.preprocess(model_src)
+    model_trafo, probes = preprocess.preprocess(model_src, dt=dt)
     pout_trafo = probes[pout_src]
 
     # Run the source model
@@ -58,7 +58,8 @@ def transform_and_test(test, model_src, tar):
     # Make sure the traces are almost equal. Note that conductance based
     # synapses were deactivated when the transform function was called. Only
     # the network graph transformation itself is tested.
-    test.assertAlmostEqual(rmse(data_src, data_trafo), 0.0)
+    print(rmse(data_src, data_trafo))
+    test.assertLessEqual(rmse(data_src, data_trafo), tolerance)
 
 
 class TestSimple(unittest.TestCase):
@@ -131,7 +132,7 @@ class TestSimple(unittest.TestCase):
             nengo.Connection(ens, tar)
             nengo.Connection(tar, tar2)
 
-        transform_and_test(self, model_src, tar2)
+        transform_and_test(self, model_src, tar2, tolerance=1e-2)
 
     def test_single_two_dimensional_ensemble(self):
         with nengo.Network() as model_src:

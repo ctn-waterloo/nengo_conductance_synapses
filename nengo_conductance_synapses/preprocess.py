@@ -1,7 +1,9 @@
-# Original author of this file is Terry Stewart
+# Note: original author of this file is Terry Stewart
 
 import nengo
 import numpy as np
+
+from nengo.utils.filter_design import cont2discrete
 
 class Unconvertible(Exception):
     pass
@@ -36,7 +38,7 @@ def find_passthrough_nodes(model):
     return nodes, in_nodes, out_nodes
 
 
-def create_replacement(c_in, c_out):
+def create_replacement(c_in, c_out, dt):
     """Generate a new Connection to replace two through a passthrough Node"""
     assert c_in.post_obj is c_out.pre_obj
     assert c_in.post_obj.output is None
@@ -49,7 +51,11 @@ def create_replacement(c_in, c_out):
     else:
         def extract_filter_coeff(flt):
             if isinstance(flt, nengo.synapses.LinearFilter):
-                return (flt.num, flt.den)
+                num, den = flt.num, flt.den
+                if flt.analog:
+                    num, den, _ = cont2discrete((num, den), dt, method='gbt', alpha=1.0)
+                    num = num.flatten()
+                return (num, den)
             return None
 
         c_in_coeff = extract_filter_coeff(c_in.synapse)
@@ -57,9 +63,16 @@ def create_replacement(c_in, c_out):
         if (c_in_coeff is None) or (c_out_coeff is None):
             raise Unconvertible("Cannot merge two filters")
 
+        delay_coeff = ([1], [1])
+
+#        print(c_in_coeff, c_out_coeff, delay_coeff)
+
+#        print(np.polymul(delay_coeff[0], c_out_coeff[0]))
+#        print(np.polymul(delay_coeff[1], c_out_coeff[1]))
+
         synapse = nengo.synapses.LinearFilter(
-            np.polymul(c_in_coeff[0], c_out_coeff[0]),
-            np.polymul(c_in_coeff[1], c_out_coeff[1]))
+            np.polymul(c_in_coeff[0], np.polymul(delay_coeff[0], c_out_coeff[0])),
+            np.polymul(c_in_coeff[1], np.polymul(delay_coeff[1], c_out_coeff[1])), analog=False)
 
     function = c_in.function
     if c_out.function is not None:
@@ -84,7 +97,7 @@ def create_replacement(c_in, c_out):
         add_to_container=False)
 
 
-def remove_nodes(objs, passthrough, original_conns):
+def remove_nodes(objs, passthrough, original_conns, dt):
     inputs = {}
     outputs = {}
     for obj in objs:
@@ -100,7 +113,7 @@ def remove_nodes(objs, passthrough, original_conns):
     for n in passthrough:
         for c_in in inputs[n]:
             for c_out in outputs[n]:
-                c = create_replacement(c_in, c_out)
+                c = create_replacement(c_in, c_out, dt)
                 if c is not None:
                     outputs[c_in.pre_obj].append(c)
                     inputs[c_out.post_obj].append(c)
@@ -117,7 +130,7 @@ def remove_nodes(objs, passthrough, original_conns):
     return conns
 
 
-def preprocess(model, scale_transform_by_radius=False):
+def preprocess(model, scale_transform_by_radius=False, dt=1e-3):
     network = nengo.Network(add_to_container=False)
 
     network.ensembles.extend(model.all_ensembles)
@@ -137,7 +150,7 @@ def preprocess(model, scale_transform_by_radius=False):
 
     passthrough, input_nodes, output_nodes = find_passthrough_nodes(model)
     conns = remove_nodes(network.ensembles + network.nodes,
-                         passthrough + input_nodes + output_nodes, conns)
+                         passthrough + input_nodes + output_nodes, conns, dt)
     for n in (passthrough + input_nodes + output_nodes):
         network.nodes.remove(n)
 

@@ -86,6 +86,21 @@ def lif_rate(gL, J, tau_ref=2e-3, v_th=1.0):
     return _rate(gL, e_eq, tau_ref, v_th)
 
 
+def average_membrane_potential_estimate(e_rev_E, use_linear_avg_pot=False):
+    """
+    Function which estimates the average membrane potential under the
+    assumption of a high output rate.
+    e_rev_E: excitatory synapse reversal potential.
+    use_linear_avg_pot: if True, returns 0.5, which is the average when
+    assuming a linear membrane potential transition between the resting
+    potential zero and the threshold potential 1.
+    """
+    if use_linear_avg_pot:
+        return 0.5
+    alpha = np.log((e_rev_E - 1) / e_rev_E)
+    return (alpha * e_rev_E + 1) / alpha
+
+
 def calc_gE_for_rate(rate,
                      gL,
                      gI,
@@ -97,37 +112,64 @@ def calc_gE_for_rate(rate,
     Calculates the excitatory conductivity required to achive a certain spike
     rate given an inhibitory conductivity.
 
-    gL: leak conductance.
-    gI: inhibitory conductance.
+    rate: target rate. Either a scalar or an arbitrary matrix. If both rate and
+    gI are a matrix, rate and gI must have the same shape.
+    gL: leak conductance, must be a scalar.
+    gI: inhibitory conductance. May be a scalar or a matrix. If both gI and rate
+    are a matrix, they must both have the same shape and a vector of that size
+    is returned.
     e_rev_E: excitatory synapse reversal potential.
     e_rev_I: inhibitory synapse reversal potential.
     tau_ref: refractory period in second.
+    atol: absolute tolerance.
     """
 
-    # Convert the rate to a time-to-spike s
-    s = 1 / rate - tau_ref
+    # Convert rate/gI to matrices, make sure they have equal size
+    rates = np.atleast_1d(rate).astype(np.float)
+    gIs = np.atleast_1d(gI).astype(np.float)
+    assert (rates.size == 1) or (gIs.size == 1) or (rates.size == gIs.size), \
+        "One of rate, gI must be scalar or rate and gI must have the same size"
+    if rates.size > 1 and gIs.size == 1:
+        gIs = np.ones_like(rates) * gIs
+    elif rates.size == 1 and gIs.size > 1:
+        rates = np.ones_like(gIs) * rates
 
     # Shorthands
     EE = e_rev_E
     EI = e_rev_I
-    gIs = np.atleast_1d(gI)
 
     # Solve t_spike_cond for gI using Newton's method
-    x = np.ones(gIs.shape) * 1000
-    for i, gI in enumerate(gIs):
+    xs = np.ones_like(gIs) * 1000.0
+    for gI, rate, x in np.nditer((gIs, rates, xs), [],
+                                 [['readonly'], ['readonly'], ['readwrite']]):
+        # Convert rate to time-to-spike and special case handling
+        if rate > 1 / tau_ref:
+            s = 1e-6  # assume quite small time-to-spike
+        if rate <= 0:
+            x[...] = 0
+            continue
+        else:
+            s = 1 / rate - tau_ref  # rate to time-to-spike
+
         step = 1
         while np.abs(step) > atol:
-            e = np.exp(-s * (gL + gI + x[i]))
-            f = (x[i] * EE + gI * EI) * e - x[i] * \
-                EE - gI * EI + x[i] + gI + gL
-            df = (-x[i] * EE * s - gI * EI * s + EE) * e - EE + 1
+            e = np.exp(-s * (gL + gI + x))
+            f = (x * EE + gI * EI) * e - x * \
+                EE - gI * EI + x + gI + gL
+            df = (-x * EE * s - gI * EI * s + EE) * e - EE + 1
 
             step = f / df
-            x[i] = x[i] - step
-    return x
+            x[...] = x - step
+    return xs
 
 
-def calc_gI_for_rate(rate, gL, gE, e_rev_E=4.33, e_rev_I=-0.33, tau_ref=2e-3):
+def calc_gI_for_rate(rate,
+                     gL,
+                     gE,
+                     e_rev_E=4.33,
+                     e_rev_I=-0.33,
+                     tau_ref=2e-3,
+                     atol=1e-9):
     """
     Calculates the inhibitory conductivity required to achive a certain spike
     rate given an inhibitory conductivity.
@@ -137,10 +179,11 @@ def calc_gI_for_rate(rate, gL, gE, e_rev_E=4.33, e_rev_I=-0.33, tau_ref=2e-3):
     e_rev_E: excitatory synapse reversal potential.
     e_rev_I: inhibitory synapse reversal potential.
     tau_ref: refractory period in second.
+    atol: absolute tolerance.
     """
 
     # Just swap e_rev_E and e_rev_I and call the previous function.
-    return calc_gE_for_rate(rate, gL, gE, e_rev_I, e_rev_E, tau_ref)
+    return calc_gE_for_rate(rate, gL, gE, e_rev_I, e_rev_E, tau_ref, atol)
 
 
 def calc_gE_for_intercept(gL, gI, e_rev_E=4.33, e_rev_I=-0.33):
@@ -224,7 +267,7 @@ def calc_optimal_a_b_c_d(x_intercept,
 
         gI = c + d
         gE = calc_gE_for_rate(max_rate, gL, gI, e_rev_E, e_rev_I)
-        gEoffsNew = calc_gEoffs(gE, gI)
+        gEoffsNew = calc_gEoffs(gE, gI) * 0.1 + gEoffs * 0.9
 
     return a, b, c, d
 
@@ -290,6 +333,110 @@ def get_activities(eval_points,
     gI = np.maximum(0, c[None, :] * X + d[None, :])
 
     return lif_cond_rate(gL, gE, gI, e_rev_E, e_rev_I, tau_ref)
+
+
+def solve_weight_matrices_for_activities(pre_activities,
+                                         post_activities,
+                                         gL=50,
+                                         e_rev_E=4.33,
+                                         e_rev_I=-0.33,
+                                         tau_ref=2e-3,
+                                         reg=1e-1,
+                                         atol=1e-3):
+    """
+    Calculates non-negative excitatory and inhibitory weight matrices such that
+    the pre and post activities line up.
+    """
+
+    import scipy.optimize
+
+    m = pre_activities.shape[0]  # Number of samples
+    Npre = pre_activities.shape[1]  # Number of neurons in the pre-population
+    Npost = post_activities.shape[
+        1]  # Number of neurons in the post-population
+    assert pre_activities.shape[0] == post_activities.shape[0], \
+        "Number of samples must be equal in pre- and post-activities"
+
+    # Calculate the scaling factor used to translate negative excitator weights
+    # to the approximate inhibitory weights
+    EV = average_membrane_potential_estimate(e_rev_E)
+    scale_I = 1 / (-e_rev_I + EV)
+
+    # Aliases
+    Apre = pre_activities
+    Apost = post_activities
+
+    # Create the excitatory and inhibitory weight matrix
+    WE = np.zeros((Npre, Npost))
+    WI = np.zeros((Npre, Npost))
+    gE = np.zeros((m, Npost))
+    gI = np.zeros((m, Npost))
+
+#    # Calculate the minimum gE needed for output spikes
+#    min_gE = calc_gE_for_intercept(gL, 0, e_rev_E=4.33, e_rev_I=-0.33)
+
+    # Form the Gram matrix and apply regularization.
+    sigma = (np.max(Apre) * reg) ** 2
+    GApre = Apre.T @ Apre
+    np.fill_diagonal(GApre, GApre.diagonal() + m * sigma)
+
+    def solve_for_weights(gTar, non_negative=False):
+        W = np.zeros((Npre, Npost))
+        GgTar = Apre.T @ gTar
+        for i in range(Npost):
+            if non_negative:
+                W[:, i] = scipy.optimize.nnls(GApre, GgTar[:, i])[0]
+            else:
+                W[:, i] = scipy.optimize.lsq_linear(GApre, GgTar[:, i]).x
+        return W
+
+    # Start with an initial guess for WE and WI
+    WE = solve_for_weights(calc_gE_for_rate(
+        Apost,
+        gL=gL,
+        gI=gI,
+        e_rev_E=e_rev_E,
+        e_rev_I=e_rev_I,
+        tau_ref=tau_ref,
+        atol=atol))
+    neg_idx = WE < 0
+    WI[neg_idx] = -WE[neg_idx] * scale_I
+    WE[neg_idx] = 0
+
+#    gI = Apre @ WI
+
+#    for _ in range(4):
+#        # Refine gE and gI using NNLS
+#        WE = solve_for_weights(calc_gE_for_rate(
+#            Apost,
+#            gL=gL,
+#            gI=gI,
+#            e_rev_E=e_rev_E,
+#            e_rev_I=e_rev_I,
+#            tau_ref=tau_ref,
+#            atol=atol), True)
+#        gE = Apre @ WE
+
+#        # Refine gE and gI using NNLS
+#        WI = solve_for_weights(calc_gI_for_rate(
+#            Apost,
+#            gL=gL,
+#            gE=gE,
+#            e_rev_E=e_rev_E,
+#            e_rev_I=e_rev_I,
+#            tau_ref=tau_ref,
+#            atol=atol), True)
+#        gI = Apre @ WI
+
+
+    # Calculate the error
+    err = np.sqrt(
+        np.mean((Apost - lif_cond_rate(
+            gL, Apre @ WE, Apre @ WI, e_rev_E, e_rev_I, tau_ref))**2))
+
+    print(err)
+
+    return WE, WI
 
 
 def solve_weight_matrices(pre_activities,
