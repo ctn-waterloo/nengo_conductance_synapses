@@ -351,12 +351,14 @@ def solve_weight_matrices_for_activities(pre_activities,
                                          e_rev_I=-0.33,
                                          tau_ref=2e-3,
                                          reg=1e-1,
+                                         lambda_=0.5,
                                          atol=1e-3):
     """
     Calculates non-negative excitatory and inhibitory weight matrices such that
     the pre and post activities line up.
     """
 
+    import sys
     import scipy.optimize
 
     m = pre_activities.shape[0]  # Number of samples
@@ -366,86 +368,73 @@ def solve_weight_matrices_for_activities(pre_activities,
     assert pre_activities.shape[0] == post_activities.shape[0], \
         "Number of samples must be equal in pre- and post-activities"
 
-    # Calculate the scaling factor used to translate negative excitator weights
-    # to the approximate inhibitory weights
-    EV = average_membrane_potential_estimate(e_rev_E)
-    scale_I = 1 / (-e_rev_I + EV)
+    # Some handy aliases
+    EE, EI, Apre, Apost = e_rev_E, e_rev_I, pre_activities, post_activities
+    G = lambda gE, gI: lif_cond_rate(gL, gE, gI, EE, EI, tau_ref)
+    solve_gE = lambda gI: calc_gE_for_rate(Apost, gL, gI, EE, EI, tau_ref, atol)
+    solve_gI = lambda gE: calc_gI_for_rate(Apost, gL, gE, EE, EI, tau_ref, atol)
 
-    # Aliases
-    Apre = pre_activities
-    Apost = post_activities
+    # Code for solving a weight matrix for the given target function
+    Apre_reg = Apre.T @ Apre
+    np.fill_diagonal(Apre_reg, np.diag(Apre_reg) + m * (reg * np.max(Apre))**2)
 
-    # Create the excitatory and inhibitory weight matrix
-    WE = np.zeros((Npre, Npost))
-    WI = np.zeros((Npre, Npost))
-    gE = np.zeros((m, Npost))
-    gI = np.zeros((m, Npost))
-
-#    # Calculate the minimum gE needed for output spikes
-#    min_gE = calc_gE_for_intercept(gL, 0, e_rev_E=4.33, e_rev_I=-0.33)
-
-    # Form the Gram matrix and apply regularization.
-    sigma = (np.max(Apre) * reg) ** 2
-    GApre = Apre.T @ Apre
-    np.fill_diagonal(GApre, GApre.diagonal() + m * sigma)
-
-    def solve_for_weights(gTar, non_negative=False):
+    def solve_for_weights(tar, Ath=0):
         W = np.zeros((Npre, Npost))
-        GgTar = Apre.T @ gTar
         for i in range(Npost):
-            if non_negative:
-                W[:, i] = scipy.optimize.nnls(GApre, GgTar[:, i])[0]
-            else:
-                W[:, i] = scipy.optimize.lsq_linear(GApre, GgTar[:, i]).x
+            mask = Apost[:, i] >= Ath  # Mask out values with zero target rate
+            if np.any(mask):
+                W[:, i] = scipy.optimize.lsq_linear(
+                    Apre_reg, (Apre[mask].T @ tar[mask, i])).x
         return W
 
-    # Start with an initial guess for WE and WI
-    WE = solve_for_weights(calc_gE_for_rate(
-        Apost,
-        gL=gL,
-        gI=gI,
-        e_rev_E=e_rev_E,
-        e_rev_I=e_rev_I,
-        tau_ref=tau_ref,
-        atol=atol))
-    neg_idx = WE < 0
-    WI[neg_idx] = -WE[neg_idx] * scale_I
-    WE[neg_idx] = 0
+    # Optimization state
+    best_err, flt_err, flt_best_err = np.inf, None, None
+    WI, WE, best_WI, best_WE = np.zeros((4, Npre, Npost))
+    gE, gI = np.zeros((2, m, Npost))
 
-#    gI = Apre @ WI
+    # Alternating optimization of the excitatory and inhibitory weights
+    i = 0
+    while True:
+        # Optimization controller -- measure the current error and abort once
+        # the error no longer improves
+        err = np.sqrt(np.mean((G(gE, gI) - Apost)**2))
+        if err < best_err:
+            best_WE, best_WI, best_err = WE, WI, err
+        if flt_err is None:
+            flt_err = err
+            flt_best_err = best_err
+        else:
+            flt_err = err * 0.5 + flt_err * 0.5
+            flt_best_err = best_err * 0.5 + flt_best_err * 0.5
+            sys.stdout.write("Current error: {:0.2f}       \r".format(err))
+            sys.stdout.flush()
+            if (i > 2 / lambda_):
+                if (flt_err - flt_best_err > 1):
+                    print("Error increasing, aborting.                  ")
+                    break
+                if (np.abs(flt_err - err) < 1e-2 * lambda_):
+                    print("Error not significantly decreasing, done.    ")
+                    break
 
-#    for _ in range(4):
-#        # Refine gE and gI using NNLS
-#        WE = solve_for_weights(calc_gE_for_rate(
-#            Apost,
-#            gL=gL,
-#            gI=gI,
-#            e_rev_E=e_rev_E,
-#            e_rev_I=e_rev_I,
-#            tau_ref=tau_ref,
-#            atol=atol), True)
-#        gE = Apre @ WE
+        # Solve for WE given the current gI
+        gE_residual = solve_gE(gI) - gE
+        WE += lambda_ * solve_for_weights(gE_residual, 1)
+        WE[WE < 0] = 0
+        gE = Apre @ WE
 
-#        # Refine gE and gI using NNLS
-#        WI = solve_for_weights(calc_gI_for_rate(
-#            Apost,
-#            gL=gL,
-#            gE=gE,
-#            e_rev_E=e_rev_E,
-#            e_rev_I=e_rev_I,
-#            tau_ref=tau_ref,
-#            atol=atol), True)
-#        gI = Apre @ WI
+        # Solve for WI given the current gE
+        gI_tar = solve_gI(gE)
+        gI_tar[Apost < 1] = calc_gI_for_intercept(gL, gE[Apost < 1], e_rev_E,
+                                                  e_rev_I) * 1.05
+        gI_residual = gI_tar - gI
+        WI += lambda_ * solve_for_weights(gI_residual)
+        WI[WI < 0] = 0
+        gI = Apre @ WI
 
+        i = i + 1
 
-    # Calculate the error
-    err = np.sqrt(
-        np.mean((Apost - lif_cond_rate(
-            gL, Apre @ WE, Apre @ WI, e_rev_E, e_rev_I, tau_ref))**2))
-
-    print(err)
-
-    return WE, WI
+    print("Final error:", best_err)
+    return best_WE, best_WI
 
 
 def solve_weight_matrices(pre_activities,
