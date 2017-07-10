@@ -187,9 +187,18 @@ def calc_gI_for_rate(rate,
 
 def calc_gE_for_intercept(gL, gI, e_rev_E=4.33, e_rev_I=-0.33):
     """
-    Calculates the excitatory conductivity required to
+    Calculates the maximum excitatory conductivity for which the output rate is
+    exactly zero.
     """
     return (gI * e_rev_I - gI - gL) / (1 - e_rev_E)
+
+
+def calc_gI_for_intercept(gL, gE, e_rev_E=4.33, e_rev_I=-0.33):
+    """
+    Calculates the minimum inhibitory conductivity for which the output rate is
+    exactly zero.
+    """
+    return (gE * e_rev_E - gE - gL) / (1 - e_rev_I)
 
 
 def calc_gL_scale_E_scale_I(x_intercept,
