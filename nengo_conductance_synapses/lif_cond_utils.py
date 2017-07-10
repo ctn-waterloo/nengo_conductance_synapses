@@ -213,9 +213,10 @@ def calc_gL_scale_E_scale_I(x_intercept,
     EE = e_rev_E
     EI = e_rev_I
     XI = x_intercept
-    GL = -np.log((
-        (-EE * XI + 2 * EE + XI - 2) / (3 * EE))) * (EE * XI + EE - XI - 1) / (
-            (1 / max_rate - tau_ref) * (EE * XI + EE - XI + 2))
+    GL = -np.log(
+        ((-EE * XI + 2 * EE + XI - 2) /
+         (3 * EE))) * (EE * XI + EE - XI - 1) / ((1 / max_rate - tau_ref) *
+                                                 (EE * XI + EE - XI + 2))
     scale_E = (3 * GL) / (2 * (EE * XI + EE - XI - 1))
     scale_I = (1 * GL) / (2 * (EI * XI - EI - XI + 1))
 
@@ -247,8 +248,8 @@ def calc_optimal_a_b_c_d(x_intercept,
     def solve_for_gEoffs(gEoffs):
         alpha = -(EI - 1) / (EE - 1)
         a0 = -gEoffs / (xi - 1)
-        b0 = (EE * gEoffs * xi - gEoffs * xi + gL * xi - gL) / (
-            (EE - 1) * (xi - 1))
+        b0 = (EE * gEoffs * xi - gEoffs * xi + gL * xi - gL) / ((EE - 1) *
+                                                                (xi - 1))
 
         solutions = np.array([
             [0, 0],
