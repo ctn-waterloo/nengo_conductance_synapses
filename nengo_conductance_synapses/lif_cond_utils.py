@@ -31,8 +31,11 @@ def _rate(g_tot, e_eq, tau_ref=2e-3, v_th=1.0):
     v_th: threshold potential.
     """
 
-    mask = 1 * (e_eq > v_th)  # Mask out invalid values
-    t_spike = -np.log1p(-mask * v_th / (e_eq + (1 - mask))) / g_tot
+    # Mask out invalid values
+    mask = 1 * np.logical_or(
+        np.logical_and(e_eq > 1, g_tot > 0),
+        np.logical_and(e_eq < 0, g_tot < 0))
+    t_spike = -np.log1p(-mask * v_th / (mask * e_eq + (1 - mask))) / g_tot
     return mask / (tau_ref + t_spike)
 
 
@@ -56,9 +59,6 @@ def lif_cond_rate(gL,
     tau_ref: refractory period in second.
     v_th: threshold potential.
     """
-
-    # Clamp gE, gI to non-negative values
-    gE, gI = np.maximum(0, gE), np.maximum(0, gI)
 
     # Calculate the total conductance and the equilibrium potential
     g_tot = gL + gE + gI
