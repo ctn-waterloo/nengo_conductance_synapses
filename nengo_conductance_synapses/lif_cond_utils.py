@@ -145,14 +145,12 @@ def calc_gE_for_rate(rate,
         # Convert rate to time-to-spike and special case handling
         if rate > 1 / tau_ref:
             s = 1e-6  # assume quite small time-to-spike
-        if rate <= 0:
-            x[...] = 0
-            continue
-        else:
-            s = 1 / rate - tau_ref  # rate to time-to-spike
+        if rate <= 1e-6:
+            rate = 1e-6
+        s = 1 / rate - tau_ref  # rate to time-to-spike
 
-        step = 1
-        while np.abs(step) > atol:
+        step, i = 1, 0
+        while (np.abs(step) > atol) and (i < 5):
             e = np.exp(-s * (gL + gI + x))
             f = (x * EE + gI * EI) * e - x * \
                 EE - gI * EI + x + gI + gL
@@ -160,6 +158,7 @@ def calc_gE_for_rate(rate,
 
             step = f / df
             x[...] = x - step
+            i = i + 1
     return xs
 
 
