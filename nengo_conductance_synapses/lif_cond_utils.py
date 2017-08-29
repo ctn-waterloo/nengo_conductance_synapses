@@ -362,14 +362,11 @@ def solve_weight_matrices_for_activities(pre_activities,
     # Code for solving a weight matrix for the given target function
     Apre_reg = Apre.T @ Apre
     np.fill_diagonal(Apre_reg, np.diag(Apre_reg) + m * (reg * np.max(Apre))**2)
-
-    def solve_for_weights(tar, Ath=0):
+    def solve_for_weights(tar):
         W = np.zeros((Npre, Npost))
         for i in range(Npost):
-            mask = Apost[:, i] >= Ath  # Mask out values with zero target rate
-            if np.any(mask):
-                W[:, i] = scipy.optimize.lsq_linear(
-                    Apre_reg, (Apre[mask].T @ tar[mask, i])).x
+            W[:, i] = scipy.optimize.lsq_linear(
+                Apre_reg, (Apre.T @ tar[:, i])).x
         return W
 
     # Optimization state
@@ -401,12 +398,6 @@ def solve_weight_matrices_for_activities(pre_activities,
                     print("Error not significantly decreasing, done.    ")
                     break
 
-        # Solve for WE given the current gI
-        gE_residual = solve_gE(gI) - gE
-        WE += lambda_ * solve_for_weights(gE_residual, 1)
-        WE[WE < 0] = 0
-        gE = Apre @ WE
-
         # Solve for WI given the current gE
         gI_tar = solve_gI(gE)
         gI_tar[Apost < 1] = calc_gI_for_intercept(gL, gE[Apost < 1], e_rev_E,
@@ -415,6 +406,12 @@ def solve_weight_matrices_for_activities(pre_activities,
         WI += lambda_ * solve_for_weights(gI_residual)
         WI[WI < 0] = 0
         gI = Apre @ WI
+
+        # Solve for WE given the current gI
+        gE_residual = solve_gE(gI) - gE
+        WE += lambda_ * solve_for_weights(gE_residual)
+        WE[WE < 0] = 0
+        gE = Apre @ WE
 
         i = i + 1
 
