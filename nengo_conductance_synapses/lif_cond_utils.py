@@ -101,13 +101,7 @@ def average_membrane_potential_estimate(e_rev_E, use_linear_avg_pot=False):
     return (alpha * e_rev_E + 1) / alpha
 
 
-def calc_gE_for_rate(rate,
-                     gL,
-                     gI,
-                     e_rev_E=4.33,
-                     e_rev_I=-0.33,
-                     tau_ref=2e-3,
-                     atol=1e-9):
+def calc_gE_for_rate(rate, gL, gI, e_rev_E=4.33, e_rev_I=-0.33, tau_ref=2e-3, atol=1e-9, max_iter=20):
     """
     Calculates the excitatory conductivity required to achive a certain spike
     rate given an inhibitory conductivity.
@@ -124,42 +118,33 @@ def calc_gE_for_rate(rate,
     atol: absolute tolerance.
     """
 
-    # Convert rate/gI to matrices, make sure they have equal size
-    rates = np.atleast_1d(rate).astype(np.float)
-    gIs = np.atleast_1d(gI).astype(np.float)
-    assert (rates.size == 1) or (gIs.size == 1) or (rates.size == gIs.size), \
-        "One of rate, gI must be scalar or rate and gI must have the same size"
-    if rates.size > 1 and gIs.size == 1:
-        gIs = np.ones_like(rates) * gIs
-    elif rates.size == 1 and gIs.size > 1:
-        rates = np.ones_like(gIs) * rates
+    # Calculate the time-to-spike for the given rates
+    max_rate = 1 / tau_ref * 0.95
+    min_rate = 1e-3
+    rate = np.maximum(min_rate, np.minimum(max_rate, rate))
+    s = 1 / rate - tau_ref  # rate to time-to-spike
 
     # Shorthands
     EE = e_rev_E
     EI = e_rev_I
 
-    # Solve t_spike_cond for gI using Newton's method
-    xs = np.ones_like(gIs) * 1000.0
-    for gI, rate, x in np.nditer((gIs, rates, xs), [],
-                                 [['readonly'], ['readonly'], ['readwrite']]):
-        # Convert rate to time-to-spike and special case handling
-        if rate > 1 / tau_ref:
-            s = 1e-6  # assume quite small time-to-spike
-        if rate <= 1e-6:
-            rate = 1e-6
-        s = 1 / rate - tau_ref  # rate to time-to-spike
+    # Calculate the initial starting value (first order-approximation)
+    x = 100# 10 * (gL - gI * (1 - EI)) / (1 - EE)
 
-        step, i = 1, 0
-        while (np.abs(step) > atol) and (i < 5):
-            e = np.exp(-s * (gL + gI + x))
-            f = (x * EE + gI * EI) * e - x * \
-                EE - gI * EI + x + gI + gL
-            df = (-x * EE * s - gI * EI * s + EE) * e - EE + 1
+    # Solve t_spike_cond = s using Newtons method
+    for _ in range(max_iter):
+        e = np.exp(-s * (gL + gI + x))
+        f = (x * EE + gI * EI) * e - x * \
+            EE - gI * EI + x + gI + gL
+        df = (-x * EE * s - gI * EI * s + EE) * e - EE + 1
 
-            step = f / df
-            x[...] = x - step
-            i = i + 1
-    return xs
+        step = f / df
+        x -= step
+
+        if np.max(np.abs(step)) < atol:
+            break
+
+    return x
 
 
 def calc_gI_for_rate(rate,
