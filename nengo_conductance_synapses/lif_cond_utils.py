@@ -331,13 +331,15 @@ def get_activities(eval_points,
 
 def solve_weight_matrices_for_activities(pre_activities,
                                          post_activities,
-                                         gL=50,
-                                         e_rev_E=4.33,
-                                         e_rev_I=-0.33,
-                                         tau_ref=2e-3,
+                                         model,
+#                                         gL=50,
+#                                         e_rev_E=4.33,
+#                                         e_rev_I=-0.33,
+#                                         tau_ref=2e-3,
                                          reg=1e-1,
                                          lambda_=0.5,
-                                         atol=1e-3):
+#                                         atol=1e-3,
+                            ):
     """
     Calculates non-negative excitatory and inhibitory weight matrices such that
     the pre and post activities line up.
@@ -354,10 +356,10 @@ def solve_weight_matrices_for_activities(pre_activities,
         "Number of samples must be equal in pre- and post-activities"
 
     # Some handy aliases
-    EE, EI, Apre, Apost = e_rev_E, e_rev_I, pre_activities, post_activities
-    G = lambda gE, gI: lif_cond_rate(gL, gE, gI, EE, EI, tau_ref)
-    solve_gE = lambda gI: calc_gE_for_rate(Apost, gL, gI, EE, EI, tau_ref, atol)
-    solve_gI = lambda gE: calc_gI_for_rate(Apost, gL, gE, EE, EI, tau_ref, atol)
+    Apre, Apost = pre_activities, post_activities
+    G = lambda gE, gI: model.rate(gE, gI)
+    solve_gE = lambda gI: model.calc_gE_for_rate(Apost, gI)
+    solve_gI = lambda gE: model.calc_gI_for_rate(Apost, gE)
 
     # Code for solving a weight matrix for the given target function
     Apre_reg = Apre.T @ Apre
@@ -365,18 +367,23 @@ def solve_weight_matrices_for_activities(pre_activities,
     def solve_for_weights(tar):
         W = np.zeros((Npre, Npost))
         for i in range(Npost):
-            W[:, i] = scipy.optimize.lsq_linear(
-                Apre_reg, (Apre.T @ tar[:, i])).x
+            W[:, i] = scipy.optimize.lsq_linear(Apre_reg, (Apre.T @ tar[:, i])).x
+#            W[:, i] = scipy.optimize.nnls(Apre_reg, (Apre.T @ tar[:, i]))[0]
         return W
 
     # Optimization state
-    best_err, flt_err, flt_best_err = np.inf, None, None
+    err, best_err, flt_err, flt_best_err = np.inf, np.inf, None, None
     WI, WE, best_WI, best_WE = np.zeros((4, Npre, Npost))
     gE, gI = np.zeros((2, m, Npost))
 
+    gE_tar = solve_gE(gI)
+    WE = solve_for_weights(gE_tar)
+#    WI[WE < 0] = -WE[WE < 0]
+#    WE[WE < 0] = 0
+
     # Alternating optimization of the excitatory and inhibitory weights
     i = 0
-    while True:
+    while i < 0:
         # Optimization controller -- measure the current error and abort once
         # the error no longer improves
         err = np.sqrt(np.mean((G(gE, gI) - Apost)**2))
@@ -390,33 +397,34 @@ def solve_weight_matrices_for_activities(pre_activities,
             flt_best_err = best_err * 0.5 + flt_best_err * 0.5
             sys.stdout.write("Current error: {:0.2f}       \r".format(err))
             sys.stdout.flush()
-            if (i > 2 / lambda_):
-                if (flt_err - flt_best_err > 1):
-                    print("Error increasing, aborting.                  ")
-                    break
-                if (np.abs(flt_err - err) < 1e-2 * lambda_):
-                    print("Error not significantly decreasing, done.    ")
-                    break
+#            if (i > 2 / lambda_):
+#                if (flt_err - flt_best_err > 1):
+#                    print("Error increasing, aborting.                  ")
+#                    break
+#                if (np.abs(flt_err - err) < 1e-2 * lambda_):
+#                    print("Error not significantly decreasing, done.    ")
+#                    break
 
         # Solve for WI given the current gE
         gI_tar = solve_gI(gE)
-        gI_tar[Apost < 1] = calc_gI_for_intercept(gL, gE[Apost < 1], e_rev_E,
-                                                  e_rev_I) * 1.05
         gI_residual = gI_tar - gI
         WI += lambda_ * solve_for_weights(gI_residual)
         WI[WI < 0] = 0
         gI = Apre @ WI
 
         # Solve for WE given the current gI
-        gE_residual = solve_gE(gI) - gE
+        gE_tar = solve_gE(gI)
+        gE_residual = gE_tar - gE
         WE += lambda_ * solve_for_weights(gE_residual)
         WE[WE < 0] = 0
         gE = Apre @ WE
 
         i = i + 1
 
-    print("Final error:", best_err)
-    return best_WE, best_WI
+#    print("Final error:", best_err)
+#    return best_WE, best_WI
+    print("Final error:", err)
+    return WE, WI
 
 
 def solve_weight_matrices(pre_activities,
